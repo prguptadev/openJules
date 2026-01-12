@@ -1,0 +1,22 @@
+{
+  "name": "@open-jules/agent-core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "zod": "^3.22.4",
+    "execa": "^8.0.1",
+    "simple-git": "^3.22.0",
+    "winston": "^3.11.0",
+    "@open-jules/shared": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/node": "^20.11.5"
+  }
+}
