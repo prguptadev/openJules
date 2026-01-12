@@ -34,17 +34,37 @@ const workerFn = async (job: Job) => {
     }
 
     const agent = agents.get(job.id)!;
-    const stream = await agent.sendMessage(command);
+    const eventStream = await agent.sendMessage(command);
     
     let fullResponse = "";
     
-    for await (const event of stream) {
-      if (event.type === 'chunk') {
-        const text = event.value.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) {
-          fullResponse += text;
-          jobManager.addLog(job.id, text); 
-        }
+    // Process the higher-level events from GeminiClient
+    for await (const event of eventStream) {
+      switch (event.type) {
+        case 'content':
+          fullResponse += event.value;
+          jobManager.addLog(job.id, event.value);
+          break;
+        case 'thought':
+          // @ts-ignore - thought summary properties might vary
+          jobManager.addLog(job.id, `[Thinking] ${event.value.summary || '...'}`);
+          break;
+        case 'tool_call_request':
+          jobManager.addLog(job.id, `[Tool Call] Executing ${event.value.name}...`);
+          break;
+        case 'tool_call_response':
+          // @ts-ignore
+          const toolName = event.value.request?.name || 'tool';
+          jobManager.addLog(job.id, `[Tool Response] ${toolName} finished.`);
+          break;
+        case 'error':
+          // @ts-ignore
+          jobManager.addLog(job.id, `[Error] ${event.value.error?.message || 'Unknown error'}`);
+          break;
+        case 'finished':
+          // @ts-ignore
+          jobManager.addLog(job.id, `[Finished] Reason: ${event.value.reason}`);
+          break;
       }
     }
     
@@ -70,7 +90,6 @@ app.post('/settings', (req, res) => {
 app.post('/auth', (req, res) => {
   const { apiKey } = req.body;
   if (!apiKey) return res.status(400).json({ error: 'API Key is required' });
-  
   saveApiKey(apiKey);
   res.json({ success: true, message: 'API Key saved' });
 });

@@ -1,10 +1,13 @@
+import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
-import { GitBranch, Terminal, FolderOpen, Server, ToggleLeft, ToggleRight, Plus } from 'lucide-react';
+import { GitBranch, Terminal, FolderOpen, Server, ToggleLeft, ToggleRight, Plus, Settings as SettingsIcon, Save } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export default function Integrations() {
   const queryClient = useQueryClient();
+  const [editingGithub, setEditingGithub] = useState(false);
+  const [githubConfig, setGithubConfig] = useState<any>({});
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -20,6 +23,7 @@ export default function Integrations() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
+      setEditingGithub(false);
     }
   });
 
@@ -33,23 +37,114 @@ export default function Integrations() {
     });
   };
 
-  const SkillCard = ({ id, label, icon: Icon, description }: any) => (
-    <div className="flex items-center justify-between p-4 bg-[#111] border border-[#222] rounded-xl hover:border-[#333] transition-colors">
-      <div className="flex items-center gap-4">
-        <div className="h-10 w-10 bg-[#1A1A1A] rounded-lg flex items-center justify-center text-gray-400">
-          <Icon className="h-5 w-5" />
+  const handleGithubSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!settings) return;
+    updateSettings.mutate({
+      github: {
+        ...settings.github,
+        ...githubConfig
+      }
+    });
+  };
+
+  const startEditGithub = () => {
+    setGithubConfig(settings?.github || {});
+    setEditingGithub(true);
+  };
+
+  const SkillCard = ({ id, label, icon: Icon, description, hasSettings, onConfigure }: any) => (
+    <div className="bg-[#111] border border-[#222] rounded-xl overflow-hidden hover:border-[#333] transition-colors">
+      <div className="flex items-center justify-between p-4">
+        <div className="flex items-center gap-4">
+          <div className="h-10 w-10 bg-[#1A1A1A] rounded-lg flex items-center justify-center text-gray-400">
+            <Icon className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="font-medium text-gray-200">{label}</h3>
+            <p className="text-xs text-gray-500">{description}</p>
+          </div>
         </div>
-        <div>
-          <h3 className="font-medium text-gray-200">{label}</h3>
-          <p className="text-xs text-gray-500">{description}</p>
+        <div className="flex items-center gap-3">
+          {hasSettings && (
+            <button 
+              onClick={onConfigure}
+              className="text-gray-500 hover:text-indigo-400 transition-colors p-2 hover:bg-[#1A1A1A] rounded-lg"
+            >
+              <SettingsIcon className="h-4 w-4" />
+            </button>
+          )}
+          <button 
+            onClick={() => toggleSkill(id)}
+            className={cn("transition-colors", settings?.enabledSkills[id] ? "text-indigo-500" : "text-gray-600")}
+          >
+            {settings?.enabledSkills[id] ? <ToggleRight className="h-8 w-8" /> : <ToggleLeft className="h-8 w-8" />}
+          </button>
         </div>
       </div>
-      <button 
-        onClick={() => toggleSkill(id)}
-        className={cn("transition-colors", settings?.enabledSkills[id] ? "text-indigo-500" : "text-gray-600")}
-      >
-        {settings?.enabledSkills[id] ? <ToggleRight className="h-8 w-8" /> : <ToggleLeft className="h-8 w-8" />}
-      </button>
+      
+      {/* Configuration Panel */}
+      {id === 'git' && editingGithub && (
+        <div className="border-t border-[#222] p-4 bg-[#161616]">
+          <form onSubmit={handleGithubSave} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Auth Mode</label>
+                <select 
+                  value={githubConfig.mode}
+                  onChange={(e) => setGithubConfig({...githubConfig, mode: e.target.value})}
+                  className="w-full bg-[#0A0A0A] border border-[#333] rounded-lg px-3 py-2 text-sm text-gray-200 focus:ring-1 focus:ring-indigo-500 outline-none"
+                >
+                  <option value="local">Local (SSH/Git Creds)</option>
+                  <option value="token">Personal Access Token</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Workspace Path</label>
+                <input 
+                  type="text"
+                  value={githubConfig.workspacePath}
+                  onChange={(e) => setGithubConfig({...githubConfig, workspacePath: e.target.value})}
+                  className="w-full bg-[#0A0A0A] border border-[#333] rounded-lg px-3 py-2 text-sm text-gray-200 focus:ring-1 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+            </div>
+            
+            {githubConfig.mode === 'token' && (
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">GitHub Token (PAT)</label>
+                <input 
+                  type="password"
+                  value={githubConfig.token || ''}
+                  onChange={(e) => setGithubConfig({...githubConfig, token: e.target.value})}
+                  placeholder="ghp_..."
+                  className="w-full bg-[#0A0A0A] border border-[#333] rounded-lg px-3 py-2 text-sm text-gray-200 focus:ring-1 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <input 
+                type="checkbox"
+                id="autoPr"
+                checked={githubConfig.autoPr}
+                onChange={(e) => setGithubConfig({...githubConfig, autoPr: e.target.checked})}
+                className="rounded bg-[#0A0A0A] border border-[#333] text-indigo-500 focus:ring-0 focus:ring-offset-0"
+              />
+              <label htmlFor="autoPr" className="text-sm text-gray-400">Automatically create Pull Requests</label>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button 
+                type="submit"
+                className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+              >
+                <Save className="h-3 w-3" /> Save Configuration
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 
@@ -72,7 +167,9 @@ export default function Integrations() {
               id="git" 
               label="Git Integration" 
               icon={GitBranch} 
-              description="Clone repositories, create branches, and commit changes." 
+              description="Clone repositories, create branches, and commit changes."
+              hasSettings={true}
+              onConfigure={startEditGithub}
             />
             <SkillCard 
               id="terminal" 

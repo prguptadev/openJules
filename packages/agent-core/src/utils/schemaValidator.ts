@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * @license
  * Copyright 2025 Google LLC
@@ -19,7 +20,6 @@ const ajValidator = new AjvClass(
     // allows use of non-standard or custom formats (the unknown format value
     // will be logged but the schema will still be considered valid).
     strictSchema: false,
-    code: { formats: true },
   },
 );
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -12,6 +12,12 @@ export interface AppSettings {
     terminal: boolean;
     filesystem: boolean;
   };
+  github: {
+    mode: 'local' | 'token';
+    token?: string;
+    workspacePath: string;
+    autoPr: boolean;
+  };
   mcpServers: Record<string, any>;
 }
 
@@ -21,6 +27,11 @@ const DEFAULT_SETTINGS: AppSettings = {
     git: true,
     terminal: true,
     filesystem: true
+  },
+  github: {
+    mode: 'local',
+    workspacePath: path.join(os.homedir(), 'open-jules-workspace'),
+    autoPr: true
   },
   mcpServers: {}
 };

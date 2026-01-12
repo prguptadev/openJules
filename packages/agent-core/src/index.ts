@@ -1,5 +1,14 @@
 export * from './tools/shell.js';
-export * from './tools/file.js';
+export * from './tools/read-file.js';
+export * from './tools/write-file.js';
+export * from './tools/ls.js';
+export * from './tools/grep.js';
+export * from './tools/glob.js';
+export * from './tools/tool-registry.js';
 export * from './llm/geminiChat.js';
 export * from './llm/turn.js';
+export * from './core/client.js';
 export { Guardrail } from './tools/guardrail.js';
+export { MessageBus } from './confirmation-bus/message-bus.js';
+export * from './tools/tools.js';
+export * from './core/prompts.js';
