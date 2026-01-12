@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'js-yaml';
+import { loadSettings } from '../config/settings.js';
 
 export class AgentService {
   private chat: GeminiChat;
@@ -12,6 +13,7 @@ export class AgentService {
 
   constructor(apiKey: string) {
     let finalKey = apiKey;
+    const settings = loadSettings();
 
     // Try to find existing credentials if not provided
     if (!finalKey || finalKey === 'PLACEHOLDER_KEY') {
@@ -59,16 +61,16 @@ export class AgentService {
 
       // Paths
       getTargetDir: () => process.cwd(),
-      getProjectRoot: () => process.cwd(), // Added missing method
-      getWorkspaceContext: () => ({ 
-        isPathWithinWorkspace: () => true, 
+      getProjectRoot: () => process.cwd(),
+      getWorkspaceContext: () => ({
+        isPathWithinWorkspace: () => true,
         getDirectories: () => [],
-        getProjectRoot: () => process.cwd() 
+        getProjectRoot: () => process.cwd()
       }),
 
       // File System
       getFileService: () => ({}),
-      getFileSystemService: () => ({}), // Added missing getter
+      getFileSystemService: () => ({}),
       getFileExclusions: () => ({ getGlobExcludes: () => [], getReadManyFilesExcludes: () => [] }),
       getFileFilteringOptions: () => ({ respectGitIgnore: true, respectGeminiIgnore: true }),
       getFileFilteringRespectGeminiIgnore: () => true,
@@ -76,25 +78,31 @@ export class AgentService {
 
       // Tools
       getAllowedTools: () => [],
-      getExcludeTools: () => new Set(),
+      getExcludeTools: () => {
+        const excluded = new Set<string>();
+        if (!settings.enabledSkills.git) excluded.add('git');
+        if (!settings.enabledSkills.terminal) excluded.add('terminal');
+        // Add more mapping as needed based on tool names
+        return excluded;
+      },
       getToolCallCommand: () => '',
       getToolDiscoveryCommand: () => '',
       getSummarizeToolOutputConfig: () => ({}),
       getShellToolInactivityTimeout: () => 60000,
-      getEnableInteractiveShell: () => false,
+      getEnableInteractiveShell: () => settings.enabledSkills.terminal,
       getToolRegistry: () => ({ getAllTools: () => [] }),
       getSkillManager: () => ({ getSkills: () => [], getSkill: () => null }),
 
       // MCP
       getAllowedMcpServers: () => [],
       getBlockedMcpServers: () => [],
-      getMcpServers: () => ({}),
+      getMcpServers: () => settings.mcpServers,
       getMcpServerCommand: () => '',
 
       // LLM & Clients
       getGeminiClient: () => new GoogleGenerativeAI(finalKey),
       getBaseLlmClient: () => new GoogleGenerativeAI(finalKey),
-      getActiveModel: () => 'gemini-2.0-flash',
+      getActiveModel: () => settings.activeModel,
       getRetryFetchErrors: () => true,
       getPreviewFeatures: () => false,
       getContentGeneratorConfig: () => ({}),
@@ -134,7 +142,6 @@ export class AgentService {
     // 2. Initialize Chat
     this.chat = new GeminiChat(this.config);
   }
-
   async sendMessage(message: string) {
     const parts = [{ text: message }];
     const stream = await this.chat.sendMessageStream(

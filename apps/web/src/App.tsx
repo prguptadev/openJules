@@ -5,12 +5,15 @@ import TaskDetail from './pages/TaskDetail';
 
 import Settings from './pages/Settings';
 
+import Integrations from './pages/Integrations';
+
 function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/tasks/:taskId" element={<TaskDetail />} />
+        <Route path="/integrations" element={<Integrations />} />
         <Route path="/settings" element={<Settings />} />
         {/* Add placeholders for other routes */}
         <Route path="/active" element={<Dashboard />} />

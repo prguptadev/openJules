@@ -2,6 +2,7 @@ import express from 'express';
 import { JobManager, Job } from './services/JobManager.js';
 import { AgentService } from './llm/AgentService.js';
 import { saveApiKey, loadApiKey } from './config/credentials.js';
+import { loadSettings, saveSettings } from './config/settings.js';
 import * as dotenv from 'dotenv';
 import path from 'path';
 
@@ -56,6 +57,15 @@ const workerFn = async (job: Job) => {
 const jobManager = new JobManager(workerFn);
 
 // --- API Endpoints ---
+
+app.get('/settings', (req, res) => {
+  res.json(loadSettings());
+});
+
+app.post('/settings', (req, res) => {
+  const updated = saveSettings(req.body);
+  res.json(updated);
+});
 
 app.post('/auth', (req, res) => {
   const { apiKey } = req.body;

@@ -40,6 +40,7 @@ const express_1 = __importDefault(require("express"));
 const JobManager_js_1 = require("./services/JobManager.js");
 const AgentService_js_1 = require("./llm/AgentService.js");
 const credentials_js_1 = require("./config/credentials.js");
+const settings_js_1 = require("./config/settings.js");
 const dotenv = __importStar(require("dotenv"));
 const path_1 = __importDefault(require("path"));
 dotenv.config({ path: path_1.default.resolve(process.cwd(), '.env') });
@@ -81,6 +82,13 @@ const workerFn = async (job) => {
 };
 const jobManager = new JobManager_js_1.JobManager(workerFn);
 // --- API Endpoints ---
+app.get('/settings', (req, res) => {
+    res.json((0, settings_js_1.loadSettings)());
+});
+app.post('/settings', (req, res) => {
+    const updated = (0, settings_js_1.saveSettings)(req.body);
+    res.json(updated);
+});
 app.post('/auth', (req, res) => {
     const { apiKey } = req.body;
     if (!apiKey)
