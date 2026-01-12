@@ -8,5 +8,13 @@ export function applyModelSelection(config: any, modelConfigKey: any) {
 }
 
 export function createAvailabilityContextProvider() {
-  return () => ({});
+  return () => ({
+    service: {
+      markHealthy: () => {},
+      recordFailure: () => {}
+    },
+    policy: {
+      model: 'stub-model'
+    }
+  });
 }
