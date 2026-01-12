@@ -1,46 +1,84 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
-const agent_core_1 = require("@open-jules/agent-core");
 const JobManager_js_1 = require("./services/JobManager.js");
+const AgentService_js_1 = require("./llm/AgentService.js");
+const dotenv = __importStar(require("dotenv"));
+const path_1 = __importDefault(require("path"));
+dotenv.config({ path: path_1.default.resolve(process.cwd(), '.env') });
 const app = (0, express_1.default)();
 app.use(express_1.default.json());
 const PORT = 3000;
-// --- Singleton Tools ---
-const autoApprover = async (cmd, reason) => {
-    console.log(`[AUTO-APPROVER] Approved: ${cmd}`);
-    return true;
-};
-// Mock Config & MessageBus for the extracted ShellTool
-const mockConfig = {
-    getTargetDir: () => process.cwd(),
-    getShellToolInactivityTimeout: () => 60000,
-    getEnableInteractiveShell: () => false,
-    getDebugMode: () => true,
-    getSummarizeToolOutputConfig: () => ({}),
-    getGeminiClient: () => ({}),
-    getWorkspaceContext: () => ({ isPathWithinWorkspace: () => true }),
-    sanitizationConfig: {}
-};
-const mockMessageBus = {};
-const guardrail = new agent_core_1.Guardrail(autoApprover);
-const shellTool = new agent_core_1.ShellTool(mockConfig, mockMessageBus);
-// Wrapper to restore Guardrail
-const safeExecute = async (command, cwd) => {
-    const isSafe = await guardrail.validate(command);
-    if (!isSafe)
-        throw new Error("Command denied by guardrail");
-    // Use the extracted tool - bypassing type checks for the prototype
-    return await shellTool.execute({ command, dir_path: cwd || process.cwd() });
-};
-// --- The "Worker" Logic (Ralph Loop Placeholder) ---
+const API_KEY = process.env.GEMINI_API_KEY;
+if (!API_KEY) {
+    console.warn("⚠️  WARNING: GEMINI_API_KEY is not set. Agent execution will fail.");
+}
+// Map of JobID -> Agent Instance (One agent per task for now)
+const agents = new Map();
 const workerFn = async (job) => {
     const { command, cwd } = job.payload;
     if (job.type === 'execute_command') {
-        return await safeExecute(command, cwd);
+        // Initialize Agent if not exists
+        if (!agents.has(job.id)) {
+            try {
+                agents.set(job.id, new AgentService_js_1.AgentService(API_KEY || ''));
+            }
+            catch (e) {
+                throw new Error("Failed to initialize Agent. Missing API Key?");
+            }
+        }
+        const agent = agents.get(job.id);
+        const stream = await agent.sendMessage(command);
+        let fullResponse = "";
+        // Process the stream
+        for await (const event of stream) {
+            if (event.type === 'chunk') {
+                const text = event.value.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text) {
+                    fullResponse += text;
+                    // In a real app, we'd stream this via WebSocket. 
+                    // For now, we just log chunks to the job log so the UI can poll them.
+                    jobManager.addLog(job.id, text);
+                }
+            }
+        }
+        return { stdout: fullResponse, exitCode: 0 };
     }
     throw new Error(`Unknown job type: ${job.type}`);
 };

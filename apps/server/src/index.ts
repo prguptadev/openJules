@@ -1,50 +1,56 @@
 import express from 'express';
-import { ShellTool, Guardrail, FileTool } from '@open-jules/agent-core';
 import { JobManager, Job } from './services/JobManager.js';
+import { AgentService } from './llm/AgentService.js';
+import * as dotenv from 'dotenv';
+import path from 'path';
+
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const app = express();
 app.use(express.json());
 
 const PORT = 3000;
+const API_KEY = process.env.GEMINI_API_KEY;
 
-// --- Singleton Tools ---
-const autoApprover = async (cmd: string, reason: string) => {
-  console.log(`[AUTO-APPROVER] Approved: ${cmd}`);
-  return true;
-};
+if (!API_KEY) {
+  console.warn("⚠️  WARNING: GEMINI_API_KEY is not set. Agent execution will fail.");
+}
 
-// Mock Config & MessageBus for the extracted ShellTool
-const mockConfig = {
-  getTargetDir: () => process.cwd(),
-  getShellToolInactivityTimeout: () => 60000,
-  getEnableInteractiveShell: () => false,
-  getDebugMode: () => true,
-  getSummarizeToolOutputConfig: () => ({}),
-  getGeminiClient: () => ({}),
-  getWorkspaceContext: () => ({ isPathWithinWorkspace: () => true }),
-  sanitizationConfig: {}
-};
-const mockMessageBus = {};
+// Map of JobID -> Agent Instance (One agent per task for now)
+const agents = new Map<string, AgentService>();
 
-const guardrail = new Guardrail(autoApprover);
-const shellTool = new ShellTool(mockConfig as any, mockMessageBus as any);
-
-// Wrapper to restore Guardrail
-const safeExecute = async (command: string, cwd?: string) => {
-  const isSafe = await guardrail.validate(command);
-  if (!isSafe) throw new Error("Command denied by guardrail");
-  
-  // Use the extracted tool - bypassing type checks for the prototype
-  return await (shellTool as any).execute({ command, dir_path: cwd || process.cwd() });
-};
-
-
-// --- The "Worker" Logic (Ralph Loop Placeholder) ---
 const workerFn = async (job: Job) => {
   const { command, cwd } = job.payload;
   
   if (job.type === 'execute_command') {
-    return await safeExecute(command, cwd);
+    // Initialize Agent if not exists
+    if (!agents.has(job.id)) {
+      try {
+        agents.set(job.id, new AgentService(API_KEY || ''));
+      } catch (e) {
+        throw new Error("Failed to initialize Agent. Missing API Key?");
+      }
+    }
+
+    const agent = agents.get(job.id)!;
+    const stream = await agent.sendMessage(command);
+    
+    let fullResponse = "";
+    
+    // Process the stream
+    for await (const event of stream) {
+      if (event.type === 'chunk') {
+        const text = event.value.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          fullResponse += text;
+          // In a real app, we'd stream this via WebSocket. 
+          // For now, we just log chunks to the job log so the UI can poll them.
+          jobManager.addLog(job.id, text); 
+        }
+      }
+    }
+    
+    return { stdout: fullResponse, exitCode: 0 };
   }
   
   throw new Error(`Unknown job type: ${job.type}`);
