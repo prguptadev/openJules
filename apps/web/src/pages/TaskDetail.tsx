@@ -1,7 +1,14 @@
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
-import { ArrowLeft, Terminal, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
+import { 
+  Terminal as TerminalIcon, 
+  BrainCircuit,
+  CheckCircle,
+  Clock,
+  Play
+} from 'lucide-react';
+import { LogViewer } from '../components/features/LogViewer';
 import { cn } from '../lib/utils';
 
 export default function TaskDetail() {
@@ -19,103 +26,69 @@ export default function TaskDetail() {
     }
   });
 
-  if (isLoading) return <div className="p-8 text-white">Loading...</div>;
-  if (!task) return <div className="p-8 text-white">Task not found</div>;
+  if (isLoading) return <div className="h-full flex items-center justify-center text-gray-500">Loading Task...</div>;
+  if (!task) return <div className="h-full flex items-center justify-center text-gray-500">Task Not Found</div>;
+
+  const isRunning = task.status === 'running' || task.status === 'pending';
 
   return (
-    <div className="max-w-6xl mx-auto p-8 h-screen flex flex-col">
-      <header className="mb-6 flex items-center gap-4 flex-shrink-0">
-        <Link to="/" className="p-2 hover:bg-neutral-800 rounded-lg text-neutral-400 hover:text-white transition-colors">
-          <ArrowLeft className="h-5 w-5" />
-        </Link>
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold font-mono text-white">{task.id}</h1>
-            <span className={cn(
-              "px-2.5 py-0.5 rounded-full text-xs font-bold uppercase",
-              task.status === 'completed' ? "bg-green-500/20 text-green-400" :
-              task.status === 'running' ? "bg-blue-500/20 text-blue-400" :
-              task.status === 'failed' ? "bg-red-500/20 text-red-400" :
-              "bg-neutral-800 text-neutral-400"
-            )}>
-              {task.status}
-            </span>
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <header className="h-16 border-b border-[#222] bg-[#0F0F0F] flex items-center px-6 justify-between flex-shrink-0">
+        <div className="flex items-center gap-4">
+          <div className="h-8 w-8 bg-[#1A1A1A] rounded-lg flex items-center justify-center border border-[#333]">
+            {isRunning ? <Play className="h-4 w-4 text-indigo-400" /> : <CheckCircle className="h-4 w-4 text-emerald-400" />}
           </div>
-          <p className="text-neutral-400 text-sm mt-1">{task.payload.command}</p>
+          <div>
+            <h1 className="font-semibold text-gray-200 line-clamp-1">{task.payload.command}</h1>
+            <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5 font-mono">
+              <span>ID: {task.id.slice(0, 8)}</span>
+              <span>•</span>
+              <span className="flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                {new Date(task.createdAt).toLocaleTimeString()}
+              </span>
+            </div>
+          </div>
+        </div>
+        
+        <div className={cn(
+          "px-3 py-1 rounded-full text-xs font-medium border uppercase tracking-wider",
+          task.status === 'completed' ? "bg-emerald-950/30 text-emerald-400 border-emerald-900/50" :
+          task.status === 'running' ? "bg-indigo-950/30 text-indigo-400 border-indigo-900/50 animate-pulse" :
+          task.status === 'failed' ? "bg-rose-950/30 text-rose-400 border-rose-900/50" :
+          "bg-gray-800 text-gray-400 border-gray-700"
+        )}>
+          {task.status}
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-grow min-h-0">
-        {/* Logs Panel */}
-        <div className="lg:col-span-2 bg-black border border-neutral-800 rounded-xl overflow-hidden flex flex-col shadow-2xl">
-          <div className="bg-neutral-900/50 px-4 py-2 border-b border-neutral-800 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Terminal className="h-4 w-4 text-neutral-500" />
-              <span className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Terminal Output</span>
-            </div>
-            {task.status === 'running' && <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />}
+      {/* Main Content (Split View) */}
+      <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-2">
+        {/* Left Pane: Mind Map / Plan (Placeholder for now) */}
+        <div className="bg-[#0A0A0A] p-6 border-r border-[#222] flex flex-col">
+          <div className="flex items-center gap-2 mb-6 text-gray-400 text-sm font-medium uppercase tracking-wider">
+            <BrainCircuit className="h-4 w-4 text-indigo-500" />
+            Execution Plan
           </div>
-          <div className="flex-grow p-4 overflow-y-auto font-mono text-sm text-neutral-300 space-y-1 scrollbar-thin scrollbar-thumb-neutral-800 scrollbar-track-transparent">
-            {task.logs.length === 0 ? (
-              <span className="text-neutral-600 italic">Waiting for logs...</span>
-            ) : (
-              task.logs.map((log: string, i: number) => (
-                <div key={i} className="break-all whitespace-pre-wrap border-l-2 border-transparent hover:border-neutral-700 pl-2 -ml-2 py-0.5">
-                  <span className="text-neutral-600 mr-3 select-none">{log.match(/^\[(.*?)\]/)?.[1] || ''}</span>
-                  <span>{log.replace(/^\[.*?\] /, '')}</span>
-                </div>
-              ))
-            )}
-            {task.status === 'running' && (
-              <div className="h-4 w-2 bg-blue-500 animate-pulse mt-2" />
-            )}
+          
+          <div className="flex-1 border-2 border-dashed border-[#222] rounded-xl flex items-center justify-center text-gray-600 bg-[#0F0F0F]">
+            <div className="text-center">
+              <BrainCircuit className="h-12 w-12 mx-auto mb-3 opacity-20" />
+              <p>Mind Map Visualization</p>
+              <p className="text-xs mt-1 opacity-50">Coming in Phase 3</p>
+            </div>
           </div>
         </div>
 
-        {/* Info / Result Panel */}
-        <div className="flex flex-col gap-6">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-6">
-            <h3 className="text-sm font-medium text-neutral-400 mb-4 uppercase tracking-wider">Execution Result</h3>
-            
-            {task.result ? (
-              <div className={cn(
-                "rounded-lg p-4 font-mono text-sm border",
-                task.status === 'failed' ? "bg-red-950/30 border-red-900/50 text-red-200" : "bg-green-950/30 border-green-900/50 text-green-200"
-              )}>
-                {task.status === 'failed' ? (
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <div className="font-bold text-red-400 mb-1">Execution Failed</div>
-                      {JSON.stringify(task.result, null, 2)}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-start gap-3">
-                    <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
-                    <div>
-                      <div className="font-bold text-green-400 mb-1">Success</div>
-                      <div className="opacity-80">
-                        Exit Code: {task.result.exitCode}<br/>
-                        Output: {task.result.stdout || '(No output)'}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="text-neutral-500 text-sm italic border border-dashed border-neutral-800 rounded-lg p-4 text-center">
-                Execution in progress... result will appear here.
-              </div>
-            )}
+        {/* Right Pane: Logs & Output */}
+        <div className="bg-[#0A0A0A] p-6 flex flex-col min-h-0">
+          <div className="flex items-center gap-2 mb-4 text-gray-400 text-sm font-medium uppercase tracking-wider">
+            <TerminalIcon className="h-4 w-4 text-emerald-500" />
+            Live Logs
           </div>
-
-          {/* Placeholder for Mind Map */}
-          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 flex-grow flex flex-col">
-             <h3 className="text-sm font-medium text-neutral-400 mb-4 uppercase tracking-wider">Plan (Mind Map)</h3>
-             <div className="flex-grow bg-neutral-950 rounded-lg border border-neutral-800 flex items-center justify-center text-neutral-600 text-sm">
-               Visualization Coming Soon
-             </div>
+          <div className="flex-1 min-h-0">
+            <LogViewer logs={task.logs} isLoading={isRunning} />
           </div>
         </div>
       </div>
