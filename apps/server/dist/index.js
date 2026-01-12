@@ -9,28 +9,43 @@ const JobManager_js_1 = require("./services/JobManager.js");
 const app = (0, express_1.default)();
 app.use(express_1.default.json());
 const PORT = 3000;
-// --- The "Worker" Logic (Ralph Loop Placeholder) ---
-const workerFn = async (job) => {
-    // In a real app, this would be the Supervisor class running the loop
-    const { command, cwd } = job.payload;
-    if (job.type === 'execute_command') {
-        // Re-instantiate tools per job if needed, or reuse singleton
-        // For now, reuse singleton for simplicity
-        return await shellTool.execute(command, cwd);
-    }
-    throw new Error(`Unknown job type: ${job.type}`);
-};
 // --- Singleton Tools ---
 const autoApprover = async (cmd, reason) => {
     console.log(`[AUTO-APPROVER] Approved: ${cmd}`);
     return true;
 };
+// Mock Config & MessageBus for the extracted ShellTool
+const mockConfig = {
+    getTargetDir: () => process.cwd(),
+    getShellToolInactivityTimeout: () => 60000,
+    getEnableInteractiveShell: () => false,
+    getDebugMode: () => true,
+    getSummarizeToolOutputConfig: () => ({}),
+    getGeminiClient: () => ({}),
+    getWorkspaceContext: () => ({ isPathWithinWorkspace: () => true }),
+    sanitizationConfig: {}
+};
+const mockMessageBus = {};
 const guardrail = new agent_core_1.Guardrail(autoApprover);
-const shellTool = new agent_core_1.ShellTool(guardrail);
-// --- Job Manager ---
+const shellTool = new agent_core_1.ShellTool(mockConfig, mockMessageBus);
+// Wrapper to restore Guardrail
+const safeExecute = async (command, cwd) => {
+    const isSafe = await guardrail.validate(command);
+    if (!isSafe)
+        throw new Error("Command denied by guardrail");
+    // Use the extracted tool - bypassing type checks for the prototype
+    return await shellTool.execute({ command, dir_path: cwd || process.cwd() });
+};
+// --- The "Worker" Logic (Ralph Loop Placeholder) ---
+const workerFn = async (job) => {
+    const { command, cwd } = job.payload;
+    if (job.type === 'execute_command') {
+        return await safeExecute(command, cwd);
+    }
+    throw new Error(`Unknown job type: ${job.type}`);
+};
 const jobManager = new JobManager_js_1.JobManager(workerFn);
 // --- API Endpoints ---
-// 1. Submit a Task (Async)
 app.post('/tasks', (req, res) => {
     const { command, cwd } = req.body;
     const job = jobManager.createJob('execute_command', { command, cwd });
@@ -40,7 +55,6 @@ app.post('/tasks', (req, res) => {
         message: 'Task accepted. Poll /tasks/:id for updates.'
     });
 });
-// 2. Poll Task Status
 app.get('/tasks/:id', (req, res) => {
     const job = jobManager.getJob(req.params.id);
     if (!job) {
@@ -48,9 +62,8 @@ app.get('/tasks/:id', (req, res) => {
     }
     res.json(job);
 });
-// 3. List all tasks (for UI)
 app.get('/tasks', (req, res) => {
-    // @ts-ignore - Accessing private map for demo (should add public getter)
+    // @ts-ignore
     const jobs = Array.from(jobManager['jobs'].values());
     res.json(jobs);
 });
