@@ -20,6 +20,8 @@ import {
   createUserContent,
   FinishReason
 } from '@google/genai';
+import { toParts } from '../code_assist/converter.js';
+import { retryWithBackoff, isRetryableError } from '../utils/retry.js';
 import {
   resolveModel,
   isGemini2Model,

@@ -1,6 +1,7 @@
 import express from 'express';
 import { JobManager, Job } from './services/JobManager.js';
 import { AgentService } from './llm/AgentService.js';
+import { saveApiKey, loadApiKey } from './config/credentials.js';
 import * as dotenv from 'dotenv';
 import path from 'path';
 
@@ -10,25 +11,24 @@ const app = express();
 app.use(express.json());
 
 const PORT = 3000;
-const API_KEY = process.env.GEMINI_API_KEY;
 
-if (!API_KEY) {
-  console.warn("⚠️  WARNING: GEMINI_API_KEY is not set. Agent execution will fail.");
-}
-
-// Map of JobID -> Agent Instance (One agent per task for now)
+// Map of JobID -> Agent Instance
 const agents = new Map<string, AgentService>();
 
 const workerFn = async (job: Job) => {
   const { command, cwd } = job.payload;
   
   if (job.type === 'execute_command') {
-    // Initialize Agent if not exists
+    const apiKey = loadApiKey();
+    if (!apiKey) {
+      throw new Error("Missing API Key. Please configure it in Settings.");
+    }
+
     if (!agents.has(job.id)) {
       try {
-        agents.set(job.id, new AgentService(API_KEY || ''));
-      } catch (e) {
-        throw new Error("Failed to initialize Agent. Missing API Key?");
+        agents.set(job.id, new AgentService(apiKey));
+      } catch (e: any) {
+        throw new Error(`Failed to initialize Agent: ${e.message}`);
       }
     }
 
@@ -37,14 +37,11 @@ const workerFn = async (job: Job) => {
     
     let fullResponse = "";
     
-    // Process the stream
     for await (const event of stream) {
       if (event.type === 'chunk') {
         const text = event.value.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) {
           fullResponse += text;
-          // In a real app, we'd stream this via WebSocket. 
-          // For now, we just log chunks to the job log so the UI can poll them.
           jobManager.addLog(job.id, text); 
         }
       }
@@ -60,21 +57,32 @@ const jobManager = new JobManager(workerFn);
 
 // --- API Endpoints ---
 
+app.post('/auth', (req, res) => {
+  const { apiKey } = req.body;
+  if (!apiKey) return res.status(400).json({ error: 'API Key is required' });
+  
+  saveApiKey(apiKey);
+  res.json({ success: true, message: 'API Key saved' });
+});
+
+app.get('/auth/status', (req, res) => {
+  const key = loadApiKey();
+  res.json({ configured: !!key });
+});
+
 app.post('/tasks', (req, res) => {
   const { command, cwd } = req.body;
   const job = jobManager.createJob('execute_command', { command, cwd });
   res.status(202).json({ 
     jobId: job.id, 
-    status: job.status,
-    message: 'Task accepted. Poll /tasks/:id for updates.' 
+    status: job.status, 
+    message: 'Task accepted.' 
   });
 });
 
 app.get('/tasks/:id', (req, res) => {
   const job = jobManager.getJob(req.params.id);
-  if (!job) {
-    return res.status(404).json({ error: 'Job not found' });
-  }
+  if (!job) return res.status(404).json({ error: 'Job not found' });
   res.json(job);
 });
 

@@ -39,41 +39,38 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const JobManager_js_1 = require("./services/JobManager.js");
 const AgentService_js_1 = require("./llm/AgentService.js");
+const credentials_js_1 = require("./config/credentials.js");
 const dotenv = __importStar(require("dotenv"));
 const path_1 = __importDefault(require("path"));
 dotenv.config({ path: path_1.default.resolve(process.cwd(), '.env') });
 const app = (0, express_1.default)();
 app.use(express_1.default.json());
 const PORT = 3000;
-const API_KEY = process.env.GEMINI_API_KEY;
-if (!API_KEY) {
-    console.warn("⚠️  WARNING: GEMINI_API_KEY is not set. Agent execution will fail.");
-}
-// Map of JobID -> Agent Instance (One agent per task for now)
+// Map of JobID -> Agent Instance
 const agents = new Map();
 const workerFn = async (job) => {
     const { command, cwd } = job.payload;
     if (job.type === 'execute_command') {
-        // Initialize Agent if not exists
+        const apiKey = (0, credentials_js_1.loadApiKey)();
+        if (!apiKey) {
+            throw new Error("Missing API Key. Please configure it in Settings.");
+        }
         if (!agents.has(job.id)) {
             try {
-                agents.set(job.id, new AgentService_js_1.AgentService(API_KEY || ''));
+                agents.set(job.id, new AgentService_js_1.AgentService(apiKey));
             }
             catch (e) {
-                throw new Error("Failed to initialize Agent. Missing API Key?");
+                throw new Error(`Failed to initialize Agent: ${e.message}`);
             }
         }
         const agent = agents.get(job.id);
         const stream = await agent.sendMessage(command);
         let fullResponse = "";
-        // Process the stream
         for await (const event of stream) {
             if (event.type === 'chunk') {
                 const text = event.value.candidates?.[0]?.content?.parts?.[0]?.text;
                 if (text) {
                     fullResponse += text;
-                    // In a real app, we'd stream this via WebSocket. 
-                    // For now, we just log chunks to the job log so the UI can poll them.
                     jobManager.addLog(job.id, text);
                 }
             }
@@ -84,20 +81,30 @@ const workerFn = async (job) => {
 };
 const jobManager = new JobManager_js_1.JobManager(workerFn);
 // --- API Endpoints ---
+app.post('/auth', (req, res) => {
+    const { apiKey } = req.body;
+    if (!apiKey)
+        return res.status(400).json({ error: 'API Key is required' });
+    (0, credentials_js_1.saveApiKey)(apiKey);
+    res.json({ success: true, message: 'API Key saved' });
+});
+app.get('/auth/status', (req, res) => {
+    const key = (0, credentials_js_1.loadApiKey)();
+    res.json({ configured: !!key });
+});
 app.post('/tasks', (req, res) => {
     const { command, cwd } = req.body;
     const job = jobManager.createJob('execute_command', { command, cwd });
     res.status(202).json({
         jobId: job.id,
         status: job.status,
-        message: 'Task accepted. Poll /tasks/:id for updates.'
+        message: 'Task accepted.'
     });
 });
 app.get('/tasks/:id', (req, res) => {
     const job = jobManager.getJob(req.params.id);
-    if (!job) {
+    if (!job)
         return res.status(404).json({ error: 'Job not found' });
-    }
     res.json(job);
 });
 app.get('/tasks', (req, res) => {

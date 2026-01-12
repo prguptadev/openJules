@@ -1,30 +1,80 @@
 import { GeminiChat } from '@open-jules/agent-core';
 import { Config, ModelConfigService } from '@open-jules/agent-core/dist/src/config/config.js';
-import { debugLogger } from '@open-jules/agent-core/dist/src/utils/debugLogger.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import * as yaml from 'js-yaml';
 
 export class AgentService {
   private chat: GeminiChat;
   private config: Config;
 
   constructor(apiKey: string) {
-    if (!apiKey) throw new Error("GEMINI_API_KEY is required");
+    let finalKey = apiKey;
 
-    // 1. Setup Mock Config (Since we don't have the full CLI config system)
+    // Try to find existing credentials if not provided
+    if (!finalKey || finalKey === 'PLACEHOLDER_KEY') {
+      try {
+        const home = os.homedir();
+        const locations = [
+          path.join(home, '.config', 'google-gemini-cli', 'credentials.json'),
+          path.join(home, '.gemini', 'config.yaml'),
+        ];
+
+        for (const loc of locations) {
+          if (fs.existsSync(loc)) {
+            const content = fs.readFileSync(loc, 'utf8');
+            if (loc.endsWith('.json')) {
+              const json = JSON.parse(content);
+              if (json.apiKey) {
+                finalKey = json.apiKey;
+                break;
+              }
+            } else if (loc.endsWith('.yaml')) {
+              const parsed = yaml.load(content) as any;
+              if (parsed?.apiKey) {
+                finalKey = parsed.apiKey;
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[AgentService] Failed to load local credentials:", e);
+      }
+    }
+
+    if (!finalKey || finalKey === 'PLACEHOLDER_KEY') {
+      throw new Error("GEMINI_API_KEY is missing. Please set it in .env or ~/.gemini/config.yaml");
+    }
+
+    // 1. Setup Mock Config
     this.config = {
-      getGeminiClient: () => new GoogleGenerativeAI(apiKey),
-      getBaseLlmClient: () => new GoogleGenerativeAI(apiKey), // Alias
-      getDebugMode: () => true,
-      getEnableHooks: () => false,
-      getMessageBus: () => null, // No message bus for now
+      // Identity & Core
+      getSessionId: () => 'session-' + Date.now(),
       modelConfigService: new ModelConfigService(),
-      // Stub required methods
+      storage: { getProjectTempDir: () => '/tmp' },
+      sanitizationConfig: {},
+
+      // Paths
       getTargetDir: () => process.cwd(),
-      getWorkspaceContext: () => ({ isPathWithinWorkspace: () => true, getDirectories: () => [] }),
+      getProjectRoot: () => process.cwd(), // Added missing method
+      getWorkspaceContext: () => ({ 
+        isPathWithinWorkspace: () => true, 
+        getDirectories: () => [],
+        getProjectRoot: () => process.cwd() 
+      }),
+
+      // File System
       getFileService: () => ({}),
+      getFileSystemService: () => ({}), // Added missing getter
       getFileExclusions: () => ({ getGlobExcludes: () => [], getReadManyFilesExcludes: () => [] }),
       getFileFilteringOptions: () => ({ respectGitIgnore: true, respectGeminiIgnore: true }),
       getFileFilteringRespectGeminiIgnore: () => true,
+      isTrustedFolder: () => true,
+
+      // Tools
       getAllowedTools: () => [],
       getExcludeTools: () => new Set(),
       getToolCallCommand: () => '',
@@ -32,32 +82,53 @@ export class AgentService {
       getSummarizeToolOutputConfig: () => ({}),
       getShellToolInactivityTimeout: () => 60000,
       getEnableInteractiveShell: () => false,
+      getToolRegistry: () => ({ getAllTools: () => [] }),
+      getSkillManager: () => ({ getSkills: () => [], getSkill: () => null }),
+
+      // MCP
       getAllowedMcpServers: () => [],
       getBlockedMcpServers: () => [],
       getMcpServers: () => ({}),
       getMcpServerCommand: () => '',
-      getApprovalMode: () => 'always',
-      setApprovalMode: () => {},
-      getIdeMode: () => false,
-      getSkillManager: () => ({ getSkills: () => [], getSkill: () => null }),
-      getPromptRegistry: () => ({}),
-      getResourceRegistry: () => ({}),
-      isTrustedFolder: () => true,
+
+      // LLM & Clients
+      getGeminiClient: () => new GoogleGenerativeAI(finalKey),
+      getBaseLlmClient: () => new GoogleGenerativeAI(finalKey),
+      getActiveModel: () => 'gemini-2.0-flash',
       getRetryFetchErrors: () => true,
       getPreviewFeatures: () => false,
-      getActiveModel: () => 'gemini-2.0-flash',
       getContentGeneratorConfig: () => ({}),
       getContentGenerator: () => ({
         generateContentStream: async (params: any) => {
-           // Direct shim to Google SDK if Config fails
-           const genAI = new GoogleGenerativeAI(apiKey);
+           const genAI = new GoogleGenerativeAI(finalKey);
            const model = genAI.getGenerativeModel({ model: params.model });
-           return model.generateContentStream(params.contents);
+           // Correctly wrap contents and systemInstruction if present
+           const request: any = {
+             contents: params.contents,
+           };
+           if (params.config?.systemInstruction) {
+             request.systemInstruction = params.config.systemInstruction;
+           }
+           if (params.config?.tools?.length > 0) {
+             request.tools = params.config.tools;
+           }
+           if (params.config?.toolConfig) {
+             request.toolConfig = params.config.toolConfig;
+           }
+           const result = await model.generateContentStream(request);
+           return result.stream;
         }
       }),
-      getToolRegistry: () => ({ getAllTools: () => [] }),
-      sanitizationConfig: {},
-      storage: { getProjectTempDir: () => '/tmp' }
+
+      // UI & Debug
+      getDebugMode: () => true,
+      getEnableHooks: () => false,
+      getMessageBus: () => null,
+      getApprovalMode: () => 'always',
+      setApprovalMode: () => {},
+      getIdeMode: () => false,
+      getPromptRegistry: () => ({}),
+      getResourceRegistry: () => ({}),
     } as unknown as Config;
 
     // 2. Initialize Chat
@@ -65,16 +136,13 @@ export class AgentService {
   }
 
   async sendMessage(message: string) {
-    // Convert string to Part[] format expected by GeminiChat
     const parts = [{ text: message }];
-    
     const stream = await this.chat.sendMessageStream(
       { model: 'gemini-2.0-flash' },
       parts,
       'default-prompt-id',
       new AbortController().signal
     );
-
     return stream;
   }
 }
