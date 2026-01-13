@@ -11,12 +11,88 @@ import {
   getCoreSystemPrompt
 } from '@open-jules/agent-core';
 import { Config, ModelConfigService } from '@open-jules/agent-core/dist/src/config/config.js';
+import { BaseLlmClient } from '@open-jules/agent-core/dist/src/core/baseLlmClient.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as yaml from 'js-yaml';
 import { loadSettings } from '../config/settings.js';
+
+// Model config aliases - maps internal aliases to actual Gemini models
+const DEFAULT_MODEL_CONFIGS = {
+  aliases: {
+    'base': {
+      modelConfig: {
+        generateContentConfig: {
+          temperature: 0,
+          topP: 1,
+        },
+      },
+    },
+    'gemini-2.5-flash-base': {
+      extends: 'base',
+      modelConfig: {
+        model: 'gemini-2.5-flash',
+      },
+    },
+    'gemini-2.5-flash': {
+      extends: 'base',
+      modelConfig: {
+        model: 'gemini-2.5-flash',
+      },
+    },
+    'gemini-2.5-pro': {
+      extends: 'base',
+      modelConfig: {
+        model: 'gemini-2.5-pro',
+      },
+    },
+    'gemini-2.5-flash-lite': {
+      extends: 'base',
+      modelConfig: {
+        model: 'gemini-2.5-flash-lite',
+      },
+    },
+    'edit-corrector': {
+      extends: 'base',
+      modelConfig: {
+        model: 'gemini-2.5-flash-lite',
+        generateContentConfig: {
+          thinkingConfig: {
+            thinkingBudget: 0,
+          },
+        },
+      },
+    },
+    'summarizer-default': {
+      extends: 'base',
+      modelConfig: {
+        model: 'gemini-2.5-flash-lite',
+        generateContentConfig: {
+          maxOutputTokens: 2000,
+        },
+      },
+    },
+    'llm-edit-fixer': {
+      extends: 'gemini-2.5-flash-base',
+      modelConfig: {},
+    },
+    'next-speaker-checker': {
+      extends: 'gemini-2.5-flash-base',
+      modelConfig: {},
+    },
+    'loop-detection': {
+      extends: 'gemini-2.5-flash-base',
+      modelConfig: {},
+    },
+    'chat-compression-default': {
+      modelConfig: {
+        model: 'gemini-2.5-pro',
+      },
+    },
+  },
+};
 
 export class AgentService {
   private client: GeminiClient;
@@ -63,7 +139,7 @@ export class AgentService {
     const configMock: any = {
       // Identity & Core
       getSessionId: () => 'session-' + Date.now(),
-      modelConfigService: new ModelConfigService(),
+      modelConfigService: new ModelConfigService(DEFAULT_MODEL_CONFIGS),
       storage: { 
         getProjectTempDir: () => path.join(os.tmpdir(), 'open-jules'),
         getProjectRoot: () => workspaceRoot
@@ -124,7 +200,7 @@ export class AgentService {
 
       // LLM & Clients
       getGeminiClient: () => new GoogleGenerativeAI(finalKey),
-      getBaseLlmClient: () => new GoogleGenerativeAI(finalKey),
+      getBaseLlmClient: () => new BaseLlmClient(configMock.getContentGenerator(), configMock),
       getModelRouterService: () => ({ 
         route: async (req: any) => ({ model: settings.activeModel, config: {} }) 
       }),
@@ -138,6 +214,8 @@ export class AgentService {
       }),
       getModelPolicyService: () => ({}),
       getEnvironmentSanitizationConfig: () => ({}),
+      getQuotaErrorOccurred: () => false,
+      getSkipNextSpeakerCheck: () => true,  // Skip next speaker check - uses internal model alias not available via API
       getRetryFetchErrors: () => true,
       getPreviewFeatures: () => false,
       getEnableHooks: () => false,
@@ -158,6 +236,42 @@ export class AgentService {
            if (params.config?.toolConfig) request.toolConfig = params.config.toolConfig;
            const result = await model.generateContentStream(request);
            return result.stream;
+        },
+        generateContent: async (params: any) => {
+           const genAI = new GoogleGenerativeAI(finalKey);
+           const model = genAI.getGenerativeModel({ model: params.model });
+           const request: any = { contents: params.contents };
+           if (params.config?.systemInstruction) request.systemInstruction = params.config.systemInstruction;
+           if (params.config?.tools?.length > 0) request.tools = params.config.tools;
+           if (params.config?.toolConfig) request.toolConfig = params.config.toolConfig;
+           // Map generation config (filter out JS-specific fields not accepted by API)
+           if (params.config) {
+             const { systemInstruction, tools, toolConfig, abortSignal, ...genConfig } = params.config;
+             if (Object.keys(genConfig).length > 0) {
+               request.generationConfig = genConfig;
+             }
+           }
+           const result = await model.generateContent(request);
+           return result.response;
+        },
+        embedContent: async (params: any) => {
+           const genAI = new GoogleGenerativeAI(finalKey);
+           const model = genAI.getGenerativeModel({ model: params.model });
+           // Handle list of strings for BaseLlmClient compatibility
+           if (Array.isArray(params.contents) && typeof params.contents[0] === 'string') {
+             const result = await model.batchEmbedContents({
+               requests: params.contents.map((t: string) => ({ content: { parts: [{ text: t }] }, taskType: 'RETRIEVAL_QUERY' }))
+             });
+             return result;
+           }
+           const result = await model.embedContent(params.contents);
+           return result;
+        },
+        countTokens: async (params: any) => {
+           const genAI = new GoogleGenerativeAI(finalKey);
+           const model = genAI.getGenerativeModel({ model: params.model });
+           const result = await model.countTokens(params.contents);
+           return result;
         }
       }),
 
