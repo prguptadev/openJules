@@ -8,7 +8,9 @@ import {
   GrepTool, 
   GlobTool,
   MessageBus,
-  getCoreSystemPrompt
+  getCoreSystemPrompt,
+  CodebaseInvestigatorAgent,
+  DelegateToAgentTool
 } from '@open-jules/agent-core';
 import { Config, ModelConfigService } from '@open-jules/agent-core/dist/src/config/config.js';
 import { BaseLlmClient } from '@open-jules/agent-core/dist/src/core/baseLlmClient.js';
@@ -382,6 +384,35 @@ If the user asks to perform tasks on a codebase (like "Generate README", "Fix bu
     this.config = configMock as unknown as Config;
     this.toolRegistry = new ToolRegistry(this.config, this.messageBus);
     
+    // Initialize Agent Registry
+    const agentRegistry = {
+      getAllDefinitions: () => [CodebaseInvestigatorAgent],
+      getDefinition: (name: string) => {
+        if (name === CodebaseInvestigatorAgent.name) return CodebaseInvestigatorAgent;
+        return undefined;
+      },
+      getToolDescription: () => {
+        return `Delegates a task to a specialized sub-agent.
+
+Available agents:
+- **${CodebaseInvestigatorAgent.name}**: ${CodebaseInvestigatorAgent.description}`;
+      },
+      getDirectoryContext: () => {
+         return `## Available Sub-Agents
+Use \`delegate_to_agent\` for complex tasks requiring specialized analysis.
+
+- **${CodebaseInvestigatorAgent.name}**: ${CodebaseInvestigatorAgent.description}`;
+      }
+    };
+
+    configMock.getToolRegistry = () => this.toolRegistry;
+    configMock.getAgentRegistry = () => agentRegistry;
+    
+    // IMPORTANT: Enable the investigator settings in the mock config
+    // This ensures getCoreSystemPrompt includes the 'primaryWorkflows_prefix_ci' prompt
+    configMock.getCodebaseInvestigatorSettings = () => ({ enabled: true });
+
+    // Register Tools
     if (settings.enabledSkills.terminal) this.toolRegistry.registerTool(new ShellTool(this.config, this.messageBus));
     if (settings.enabledSkills.filesystem) {
       this.toolRegistry.registerTool(new ReadFileTool(this.config, this.messageBus));
@@ -390,9 +421,10 @@ If the user asks to perform tasks on a codebase (like "Generate README", "Fix bu
       this.toolRegistry.registerTool(new GrepTool(this.config, this.messageBus));
       this.toolRegistry.registerTool(new GlobTool(this.config, this.messageBus));
     }
-
-    configMock.getToolRegistry = () => this.toolRegistry;
-    configMock.getAgentRegistry = () => ({ getAgent: () => null, getDirectoryContext: () => null });
+    
+    // Register Delegation Tool
+    // Cast agentRegistry to any to bypass strict type check against the full AgentRegistry class
+    this.toolRegistry.registerTool(new DelegateToAgentTool(agentRegistry as any, this.config, this.messageBus));
 
     this.client = new GeminiClient(this.config);
   }

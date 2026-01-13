@@ -12,3 +12,5 @@ export { Guardrail } from './tools/guardrail.js';
 export { MessageBus } from './confirmation-bus/message-bus.js';
 export * from './tools/tools.js';
 export * from './core/prompts.js';
+export * from './agents/codebase-investigator.js';
+export * from './agents/delegate-to-agent-tool.js';
