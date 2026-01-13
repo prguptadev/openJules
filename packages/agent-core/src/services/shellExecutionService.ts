@@ -15,6 +15,7 @@ import type { IPty } from '@lydell/node-pty';
 import { getCachedEncodingForBuffer } from '../utils/systemEncoding.js';
 import { getShellConfiguration, type ShellType } from '../utils/shell-utils.js';
 import { isBinary } from '../utils/textUtils.js';
+import { sanitizeEnvironment, type EnvironmentSanitizationConfig } from './environmentSanitization.js';
 import * as xtermHeadless from '@xterm/headless';
 const { Terminal } = xtermHeadless;
 

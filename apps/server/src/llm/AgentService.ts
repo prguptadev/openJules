@@ -104,6 +104,12 @@ export class AgentService {
     let finalKey = apiKey;
     const settings = loadSettings();
 
+    // Inject GitHub token into process.env so shell commands can use it
+    if (settings.github?.mode === 'token' && settings.github.token) {
+      process.env.GITHUB_TOKEN = settings.github.token;
+      process.env.GH_TOKEN = settings.github.token;
+    }
+
     // Try to find existing credentials
     if (!finalKey || finalKey === 'PLACEHOLDER_KEY') {
       try {
@@ -145,12 +151,9 @@ export class AgentService {
         getProjectRoot: () => workspaceRoot
       },
       sanitizationConfig: {
-        env: {
-          ...process.env,
-          ...(settings.github?.mode === 'token' && settings.github.token 
-              ? { GITHUB_TOKEN: settings.github.token, GH_TOKEN: settings.github.token } 
-              : {})
-        }
+        allowedEnvironmentVariables: ['GITHUB_TOKEN', 'GH_TOKEN', 'HOME', 'PATH', 'USER', 'SHELL', 'LANG', 'TMPDIR', 'NODE_ENV'],
+        blockedEnvironmentVariables: [],
+        enableEnvironmentVariableRedaction: false,  // Don't redact in local/server mode
       },
 
       // Paths
@@ -321,5 +324,49 @@ export class AgentService {
     const signal = new AbortController().signal;
     const promptId = this.config.getSessionId();
     return this.client.sendMessageStream(message, signal, promptId);
+  }
+
+  async executeToolCalls(toolCalls: Array<{ name: string; args: any; callId: string }>) {
+    const results: Array<{ name: string; output: string; error?: string; exitCode?: number }> = [];
+    const signal = new AbortController().signal;
+
+    for (const toolCall of toolCalls) {
+      try {
+        const tool = this.toolRegistry.getTool(toolCall.name);
+        if (!tool) {
+          results.push({
+            name: toolCall.name,
+            output: '',
+            error: `Tool "${toolCall.name}" not found`,
+          });
+          continue;
+        }
+
+        // Create invocation and execute - call the tool directly via invoke
+        const invocation = (tool as any).createInvocation(
+          toolCall.args,
+          this.messageBus,
+          toolCall.name,
+          tool.displayName
+        );
+
+        const result = await invocation.execute(signal);
+
+        results.push({
+          name: toolCall.name,
+          output: result.llmContent || result.returnDisplay || '',
+          exitCode: (result as any).exitCode,
+          error: result.error?.message,
+        });
+      } catch (e: any) {
+        results.push({
+          name: toolCall.name,
+          output: '',
+          error: e.message || 'Unknown error',
+        });
+      }
+    }
+
+    return results;
   }
 }

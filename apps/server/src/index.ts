@@ -17,8 +17,8 @@ const PORT = 3000;
 const agents = new Map<string, AgentService>();
 
 const workerFn = async (job: Job) => {
-  const { command, cwd } = job.payload;
-  
+  const { command } = job.payload;
+
   if (job.type === 'execute_command') {
     const apiKey = loadApiKey();
     if (!apiKey) {
@@ -34,43 +34,87 @@ const workerFn = async (job: Job) => {
     }
 
     const agent = agents.get(job.id)!;
-    const eventStream = await agent.sendMessage(command);
-    
+
     let fullResponse = "";
-    
-    // Process the higher-level events from GeminiClient
-    for await (const event of eventStream) {
-      switch (event.type) {
-        case 'content':
-          fullResponse += event.value;
-          jobManager.addLog(job.id, event.value);
-          break;
-        case 'thought':
-          // @ts-ignore - thought summary properties might vary
-          jobManager.addLog(job.id, `[Thinking] ${event.value.summary || '...'}`);
-          break;
-        case 'tool_call_request':
-          jobManager.addLog(job.id, `[Tool Call] Executing ${event.value.name}...`);
-          break;
-        case 'tool_call_response':
-          // @ts-ignore
-          const toolName = event.value.request?.name || 'tool';
-          jobManager.addLog(job.id, `[Tool Response] ${toolName} finished.`);
-          break;
-        case 'error':
-          // @ts-ignore
-          jobManager.addLog(job.id, `[Error] ${event.value.error?.message || 'Unknown error'}`);
-          break;
-        case 'finished':
-          // @ts-ignore
-          jobManager.addLog(job.id, `[Finished] Reason: ${event.value.reason}`);
-          break;
+    const maxTurns = 50;  // Safety limit
+    let turnCount = 0;
+    let currentMessage = command;
+
+    // Main agent loop - continues until no more tool calls
+    while (turnCount < maxTurns) {
+      turnCount++;
+      const eventStream = await agent.sendMessage(currentMessage);
+
+      const pendingToolCalls: any[] = [];
+      let hasFinished = false;
+
+      // Process events from this turn
+      for await (const event of eventStream) {
+        switch (event.type) {
+          case 'content':
+            fullResponse += event.value;
+            jobManager.addLog(job.id, event.value);
+            break;
+          case 'thought':
+            // @ts-ignore
+            jobManager.addLog(job.id, `[Thinking] ${event.value.summary || '...'}`);
+            break;
+          case 'tool_call_request':
+            // @ts-ignore
+            const toolRequest = event.value;
+            jobManager.addLog(job.id, `[Tool Call] ${toolRequest.name}(${JSON.stringify(toolRequest.args).slice(0, 100)}...)`);
+            pendingToolCalls.push(toolRequest);
+            break;
+          case 'tool_call_response':
+            // @ts-ignore
+            const toolName = event.value.request?.name || 'tool';
+            // @ts-ignore
+            const resultPreview = (event.value.response?.resultDisplay || '').slice(0, 200);
+            jobManager.addLog(job.id, `[Tool Result] ${toolName}: ${resultPreview}...`);
+            break;
+          case 'error':
+            // @ts-ignore
+            jobManager.addLog(job.id, `[Error] ${event.value.error?.message || 'Unknown error'}`);
+            break;
+          case 'finished':
+            // @ts-ignore
+            jobManager.addLog(job.id, `[Finished] Reason: ${event.value.reason}`);
+            hasFinished = true;
+            break;
+        }
+      }
+
+      // Execute any pending tool calls
+      if (pendingToolCalls.length > 0) {
+        jobManager.addLog(job.id, `[Executing ${pendingToolCalls.length} tool call(s)...]`);
+
+        const toolResults = await agent.executeToolCalls(pendingToolCalls);
+
+        for (const result of toolResults) {
+          jobManager.addLog(job.id, `[Tool ${result.name}] Exit: ${result.exitCode ?? 'ok'}, Output: ${(result.output || '').slice(0, 300)}...`);
+        }
+
+        // Continue conversation with tool results
+        currentMessage = `Tool execution results:\n${toolResults.map(r =>
+          `${r.name}: ${r.output || r.error || 'completed'}`
+        ).join('\n')}`;
+      } else {
+        // No more tool calls, we're done
+        break;
+      }
+
+      if (hasFinished && pendingToolCalls.length === 0) {
+        break;
       }
     }
-    
+
+    if (turnCount >= maxTurns) {
+      jobManager.addLog(job.id, `[Warning] Reached maximum turn limit (${maxTurns})`);
+    }
+
     return { stdout: fullResponse, exitCode: 0 };
   }
-  
+
   throw new Error(`Unknown job type: ${job.type}`);
 };
 
