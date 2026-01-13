@@ -60,7 +60,11 @@ const workerFn = async (job: Job) => {
       throw new Error("Missing API Key. Please configure it in Settings.");
     }
 
-    if (!agents.has(job.id)) {
+    // Use sessionId as key to persist agent (conversation history) across tasks
+    // If no sessionId, use jobId (one-off task)
+    const agentKey = sessionId || job.id;
+
+    if (!agents.has(agentKey)) {
       try {
         // Build agent options with session context if available
         const agentOptions: AgentServiceOptions = { apiKey };
@@ -89,13 +93,13 @@ const workerFn = async (job: Job) => {
           }
         }
 
-        agents.set(job.id, new AgentService(agentOptions));
+        agents.set(agentKey, new AgentService(agentOptions));
       } catch (e: any) {
         throw new Error(`Failed to initialize Agent: ${e.message}`);
       }
     }
 
-    const agent = agents.get(job.id)!;
+    const agent = agents.get(agentKey)!;
 
     let fullResponse = "";
     const maxTurns = 50;  // Safety limit

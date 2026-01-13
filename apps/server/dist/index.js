@@ -52,6 +52,23 @@ const app = (0, express_1.default)();
 app.use(express_1.default.json());
 app.use((0, cors_1.default)());
 const PORT = 3000;
+// Helper to sanitize error logs
+function logError(context, error) {
+    if (error.config || error.isAxiosError) {
+        // Sanitize Axios errors to avoid leaking headers (tokens)
+        const sanitized = {
+            message: error.message,
+            code: error.code,
+            status: error.response?.status,
+            url: error.config?.url,
+            method: error.config?.method,
+        };
+        console.error(`${context}:`, sanitized);
+    }
+    else {
+        console.error(`${context}:`, error);
+    }
+}
 // Map of JobID -> Agent Instance
 const agents = new Map();
 // Store OAuth states temporarily (in production, use Redis)
@@ -72,7 +89,10 @@ const workerFn = async (job) => {
         if (!apiKey) {
             throw new Error("Missing API Key. Please configure it in Settings.");
         }
-        if (!agents.has(job.id)) {
+        // Use sessionId as key to persist agent (conversation history) across tasks
+        // If no sessionId, use jobId (one-off task)
+        const agentKey = sessionId || job.id;
+        if (!agents.has(agentKey)) {
             try {
                 // Build agent options with session context if available
                 const agentOptions = { apiKey };
@@ -97,13 +117,13 @@ const workerFn = async (job) => {
                         }
                     }
                 }
-                agents.set(job.id, new AgentService_js_1.AgentService(agentOptions));
+                agents.set(agentKey, new AgentService_js_1.AgentService(agentOptions));
             }
             catch (e) {
                 throw new Error(`Failed to initialize Agent: ${e.message}`);
             }
         }
-        const agent = agents.get(job.id);
+        const agent = agents.get(agentKey);
         let fullResponse = "";
         const maxTurns = 50; // Safety limit
         let turnCount = 0;
@@ -176,25 +196,25 @@ const workerFn = async (job) => {
 };
 const jobManager = new JobManager_js_1.JobManager(workerFn);
 // --- API Endpoints ---
-app.get('/settings', (req, res) => {
+app.get('/api/settings', (req, res) => {
     res.json((0, settings_js_1.loadSettings)());
 });
-app.post('/settings', (req, res) => {
+app.post('/api/settings', (req, res) => {
     const updated = (0, settings_js_1.saveSettings)(req.body);
     res.json(updated);
 });
-app.post('/auth', (req, res) => {
+app.post('/api/auth', (req, res) => {
     const { apiKey } = req.body;
     if (!apiKey)
         return res.status(400).json({ error: 'API Key is required' });
     (0, credentials_js_1.saveApiKey)(apiKey);
     res.json({ success: true, message: 'API Key saved' });
 });
-app.get('/auth/status', (req, res) => {
+app.get('/api/auth/status', (req, res) => {
     const key = (0, credentials_js_1.loadApiKey)();
     res.json({ configured: !!key });
 });
-app.post('/tasks', (req, res) => {
+app.post('/api/tasks', (req, res) => {
     const { command, cwd } = req.body;
     const job = jobManager.createJob('execute_command', { command, cwd });
     res.status(202).json({
@@ -203,13 +223,13 @@ app.post('/tasks', (req, res) => {
         message: 'Task accepted.'
     });
 });
-app.get('/tasks/:id', (req, res) => {
+app.get('/api/tasks/:id', (req, res) => {
     const job = jobManager.getJob(req.params.id);
     if (!job)
         return res.status(404).json({ error: 'Job not found' });
     res.json(job);
 });
-app.get('/tasks', (req, res) => {
+app.get('/api/tasks', (req, res) => {
     // @ts-ignore
     const jobs = Array.from(jobManager['jobs'].values());
     res.json(jobs);
@@ -268,7 +288,7 @@ app.get('/api/github/callback', async (req, res) => {
         res.redirect(`${redirectUrl}?sessionId=${session.id}`);
     }
     catch (error) {
-        console.error('GitHub OAuth error:', error);
+        logError('GitHub OAuth error', error);
         res.status(500).json({ error: 'OAuth failed', message: error.message });
     }
 });
@@ -306,7 +326,7 @@ app.get('/api/sessions/:id/repos', async (req, res) => {
         res.json(repos);
     }
     catch (error) {
-        console.error('Failed to list repos:', error);
+        logError('Failed to list repos', error);
         res.status(500).json({ error: 'Failed to list repositories', message: error.message });
     }
 });
@@ -325,7 +345,7 @@ app.get('/api/sessions/:id/repos/:owner/:repo/branches', async (req, res) => {
         res.json(branches);
     }
     catch (error) {
-        console.error('Failed to list branches:', error);
+        logError('Failed to list branches', error);
         res.status(500).json({ error: 'Failed to list branches', message: error.message });
     }
 });
@@ -358,7 +378,7 @@ app.post('/api/sessions/:id/select-repo', async (req, res) => {
         });
     }
     catch (error) {
-        console.error('Failed to select repo:', error);
+        logError('Failed to select repo', error);
         res.status(500).json({ error: 'Failed to select repository', message: error.message });
     }
 });
@@ -377,7 +397,7 @@ app.post('/api/sessions/:id/change-branch', async (req, res) => {
         });
     }
     catch (error) {
-        console.error('Failed to change branch:', error);
+        logError('Failed to change branch', error);
         res.status(500).json({ error: 'Failed to change branch', message: error.message });
     }
 });

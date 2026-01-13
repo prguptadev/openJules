@@ -343,7 +343,28 @@ export class AgentService {
       getTurnLimit: () => 100,
       getEnvironmentMemory: () => '',
       getSkillMemory: () => '',
-      getUserMemory: () => '',
+      getUserMemory: () => {
+        if (this.repoContext) {
+          return `
+CURRENT REPOSITORY CONTEXT:
+Name: ${this.repoContext.fullName}
+Branch: ${this.repoContext.branch}
+Owner: ${this.repoContext.owner}
+Path: ${workspaceRoot}
+
+You are currently working in the "${this.repoContext.name}" repository.
+All file operations should be relative to the repository root.
+`;
+        }
+        return `
+NO REPOSITORY SELECTED.
+You are currently in a global workspace without a specific repository context.
+If the user asks to perform tasks on a codebase (like "Generate README", "Fix bug", etc.), you MUST:
+1. Inform them that no repository is currently selected.
+2. Ask them to provide the GitHub URL of the repository they want to work on, or to select one from the UI.
+3. Do NOT attempt to run file operations or build commands until a repository is established.
+`;
+      },
       getGlobalMemory: () => '',
       getMessageBus: () => this.messageBus,
       getHookSystem: () => null,
