@@ -1,8 +1,12 @@
 import express from 'express';
+import crypto from 'crypto';
+import cors from 'cors';
 import { JobManager, Job } from './services/JobManager.js';
-import { AgentService } from './llm/AgentService.js';
+import { AgentService, AgentServiceOptions } from './llm/AgentService.js';
 import { saveApiKey, loadApiKey } from './config/credentials.js';
 import { loadSettings, saveSettings } from './config/settings.js';
+import { githubService } from './services/GitHubService.js';
+import { sessionManager, Session } from './services/SessionManager.js';
 import * as dotenv from 'dotenv';
 import path from 'path';
 
@@ -10,14 +14,45 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const app = express();
 app.use(express.json());
+app.use(cors());
 
 const PORT = 3000;
+
+// Helper to sanitize error logs
+function logError(context: string, error: any) {
+  if (error.config || error.isAxiosError) {
+    // Sanitize Axios errors to avoid leaking headers (tokens)
+    const sanitized = {
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      url: error.config?.url,
+      method: error.config?.method,
+    };
+    console.error(`${context}:`, sanitized);
+  } else {
+    console.error(`${context}:`, error);
+  }
+}
 
 // Map of JobID -> Agent Instance
 const agents = new Map<string, AgentService>();
 
+// Store OAuth states temporarily (in production, use Redis)
+const oauthStates = new Map<string, { timestamp: number; redirectUrl?: string }>();
+
+// Cleanup old OAuth states every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [state, data] of oauthStates.entries()) {
+    if (now - data.timestamp > 10 * 60 * 1000) { // 10 minutes expiry
+      oauthStates.delete(state);
+    }
+  }
+}, 5 * 60 * 1000);
+
 const workerFn = async (job: Job) => {
-  const { command } = job.payload;
+  const { command, cwd, sessionId, repo, branch } = job.payload;
 
   if (job.type === 'execute_command') {
     const apiKey = loadApiKey();
@@ -27,7 +62,34 @@ const workerFn = async (job: Job) => {
 
     if (!agents.has(job.id)) {
       try {
-        agents.set(job.id, new AgentService(apiKey));
+        // Build agent options with session context if available
+        const agentOptions: AgentServiceOptions = { apiKey };
+
+        if (sessionId) {
+          const session = sessionManager.getSession(sessionId);
+          if (session) {
+            // Use session workspace path
+            agentOptions.workspacePath = cwd || sessionManager.getRepoPath(sessionId) || undefined;
+
+            // Inject GitHub token from session
+            const githubToken = sessionManager.getGitHubToken(sessionId);
+            if (githubToken) {
+              agentOptions.githubToken = githubToken;
+            }
+
+            // Add repo context
+            if (repo && branch) {
+              agentOptions.repoContext = {
+                fullName: repo.fullName,
+                branch: branch,
+                owner: repo.owner,
+                name: repo.name,
+              };
+            }
+          }
+        }
+
+        agents.set(job.id, new AgentService(agentOptions));
       } catch (e: any) {
         throw new Error(`Failed to initialize Agent: ${e.message}`);
       }
@@ -122,28 +184,28 @@ const jobManager = new JobManager(workerFn);
 
 // --- API Endpoints ---
 
-app.get('/settings', (req, res) => {
+app.get('/api/settings', (req, res) => {
   res.json(loadSettings());
 });
 
-app.post('/settings', (req, res) => {
+app.post('/api/settings', (req, res) => {
   const updated = saveSettings(req.body);
   res.json(updated);
 });
 
-app.post('/auth', (req, res) => {
+app.post('/api/auth', (req, res) => {
   const { apiKey } = req.body;
   if (!apiKey) return res.status(400).json({ error: 'API Key is required' });
   saveApiKey(apiKey);
   res.json({ success: true, message: 'API Key saved' });
 });
 
-app.get('/auth/status', (req, res) => {
+app.get('/api/auth/status', (req, res) => {
   const key = loadApiKey();
   res.json({ configured: !!key });
 });
 
-app.post('/tasks', (req, res) => {
+app.post('/api/tasks', (req, res) => {
   const { command, cwd } = req.body;
   const job = jobManager.createJob('execute_command', { command, cwd });
   res.status(202).json({ 
@@ -153,16 +215,266 @@ app.post('/tasks', (req, res) => {
   });
 });
 
-app.get('/tasks/:id', (req, res) => {
+app.get('/api/tasks/:id', (req, res) => {
   const job = jobManager.getJob(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
   res.json(job);
 });
 
-app.get('/tasks', (req, res) => {
+app.get('/api/tasks', (req, res) => {
   // @ts-ignore
   const jobs = Array.from(jobManager['jobs'].values()); 
   res.json(jobs);
+});
+
+// --- GitHub OAuth & Session Endpoints ---
+
+// Check if GitHub OAuth is configured
+app.get('/api/github/status', (req, res) => {
+  res.json({
+    configured: githubService.isConfigured(),
+    message: githubService.isConfigured()
+      ? 'GitHub OAuth is configured'
+      : 'Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET environment variables'
+  });
+});
+
+// Start GitHub OAuth flow
+app.get('/api/github/auth', (req, res) => {
+  if (!githubService.isConfigured()) {
+    return res.status(503).json({
+      error: 'GitHub OAuth not configured',
+      message: 'Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET environment variables'
+    });
+  }
+
+  const state = crypto.randomBytes(16).toString('hex');
+  const redirectUrl = req.query.redirect as string | undefined;
+
+  oauthStates.set(state, {
+    timestamp: Date.now(),
+    redirectUrl
+  });
+
+  const authUrl = githubService.getAuthorizationUrl(state);
+  res.json({ authUrl });
+});
+
+// GitHub OAuth callback
+app.get('/api/github/callback', async (req, res) => {
+  const { code, state } = req.query;
+
+  if (!code || !state) {
+    return res.status(400).json({ error: 'Missing code or state parameter' });
+  }
+
+  const stateData = oauthStates.get(state as string);
+  if (!stateData) {
+    return res.status(400).json({ error: 'Invalid or expired state' });
+  }
+
+  oauthStates.delete(state as string);
+
+  try {
+    // Exchange code for token
+    const accessToken = await githubService.exchangeCodeForToken(code as string);
+
+    // Get user info
+    const user = await githubService.getUser(accessToken);
+
+    // Create or update session
+    const session = sessionManager.getOrCreateSession(
+      user.id.toString(),
+      accessToken,
+      {
+        login: user.login,
+        name: user.name,
+        avatarUrl: user.avatarUrl,
+      }
+    );
+
+    // Redirect to frontend with session ID
+    const redirectUrl = stateData.redirectUrl || 'http://localhost:5173';
+    res.redirect(`${redirectUrl}?sessionId=${session.id}`);
+  } catch (error: any) {
+    logError('GitHub OAuth error', error);
+    res.status(500).json({ error: 'OAuth failed', message: error.message });
+  }
+});
+
+// Get current session
+app.get('/api/sessions/:id', (req, res) => {
+  const session = sessionManager.getSession(req.params.id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  // Return session without sensitive data
+  res.json({
+    id: session.id,
+    githubUser: session.githubUser,
+    selectedRepo: session.selectedRepo,
+    selectedBranch: session.selectedBranch,
+    status: session.status,
+    statusMessage: session.statusMessage,
+    agentsConfig: session.agentsConfig,
+    createdAt: session.createdAt,
+    lastActiveAt: session.lastActiveAt,
+  });
+});
+
+// List user's GitHub repos
+app.get('/api/sessions/:id/repos', async (req, res) => {
+  const session = sessionManager.getSession(req.params.id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  const token = sessionManager.getGitHubToken(req.params.id);
+  if (!token) {
+    return res.status(401).json({ error: 'No GitHub token available' });
+  }
+
+  try {
+    const repos = await githubService.listRepos(token);
+    res.json(repos);
+  } catch (error: any) {
+    logError('Failed to list repos', error);
+    res.status(500).json({ error: 'Failed to list repositories', message: error.message });
+  }
+});
+
+// List branches for a repo
+app.get('/api/sessions/:id/repos/:owner/:repo/branches', async (req, res) => {
+  const session = sessionManager.getSession(req.params.id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  const token = sessionManager.getGitHubToken(req.params.id);
+  if (!token) {
+    return res.status(401).json({ error: 'No GitHub token available' });
+  }
+
+  try {
+    const branches = await githubService.listBranches(token, req.params.owner, req.params.repo);
+    res.json(branches);
+  } catch (error: any) {
+    logError('Failed to list branches', error);
+    res.status(500).json({ error: 'Failed to list branches', message: error.message });
+  }
+});
+
+// Select a repo for the session
+app.post('/api/sessions/:id/select-repo', async (req, res) => {
+  const { repoId, branch } = req.body;
+
+  const session = sessionManager.getSession(req.params.id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  const token = sessionManager.getGitHubToken(req.params.id);
+  if (!token) {
+    return res.status(401).json({ error: 'No GitHub token available' });
+  }
+
+  try {
+    // Get full repo details
+    const repos = await githubService.listRepos(token);
+    const repo = repos.find(r => r.id === repoId);
+
+    if (!repo) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
+
+    // Select the repo (this triggers cloning in background)
+    const updatedSession = await sessionManager.selectRepo(req.params.id, repo, branch);
+
+    res.json({
+      id: updatedSession.id,
+      selectedRepo: updatedSession.selectedRepo,
+      selectedBranch: updatedSession.selectedBranch,
+      status: updatedSession.status,
+      statusMessage: updatedSession.statusMessage,
+    });
+  } catch (error: any) {
+    logError('Failed to select repo', error);
+    res.status(500).json({ error: 'Failed to select repository', message: error.message });
+  }
+});
+
+// Change branch for current repo
+app.post('/api/sessions/:id/change-branch', async (req, res) => {
+  const { branch } = req.body;
+
+  if (!branch) {
+    return res.status(400).json({ error: 'Branch is required' });
+  }
+
+  try {
+    const updatedSession = await sessionManager.changeBranch(req.params.id, branch);
+    res.json({
+      id: updatedSession.id,
+      selectedBranch: updatedSession.selectedBranch,
+      status: updatedSession.status,
+    });
+  } catch (error: any) {
+    logError('Failed to change branch', error);
+    res.status(500).json({ error: 'Failed to change branch', message: error.message });
+  }
+});
+
+// Submit task scoped to session's repo
+app.post('/api/sessions/:id/tasks', (req, res) => {
+  const { command } = req.body;
+
+  const session = sessionManager.getSession(req.params.id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+
+  if (session.status !== 'ready') {
+    return res.status(400).json({
+      error: 'Session not ready',
+      status: session.status,
+      message: session.statusMessage
+    });
+  }
+
+  const repoPath = sessionManager.getRepoPath(req.params.id);
+  if (!repoPath) {
+    return res.status(400).json({ error: 'No repository selected' });
+  }
+
+  // Create job with session context
+  const job = jobManager.createJob('execute_command', {
+    command,
+    cwd: repoPath,
+    sessionId: req.params.id,
+    repo: session.selectedRepo,
+    branch: session.selectedBranch,
+  });
+
+  // Touch session activity
+  sessionManager.touchSession(req.params.id);
+
+  res.status(202).json({
+    jobId: job.id,
+    status: job.status,
+    message: 'Task accepted.',
+    repo: session.selectedRepo?.fullName,
+    branch: session.selectedBranch,
+  });
+});
+
+// Delete session
+app.delete('/api/sessions/:id', (req, res) => {
+  const deleted = sessionManager.deleteSession(req.params.id);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  res.json({ success: true, message: 'Session deleted' });
 });
 
 app.listen(PORT, () => {

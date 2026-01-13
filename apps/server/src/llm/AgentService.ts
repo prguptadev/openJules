@@ -94,21 +94,45 @@ const DEFAULT_MODEL_CONFIGS = {
   },
 };
 
+export interface AgentServiceOptions {
+  apiKey: string;
+  workspacePath?: string;
+  githubToken?: string;
+  repoContext?: {
+    fullName: string;
+    branch: string;
+    owner: string;
+    name: string;
+  };
+}
+
 export class AgentService {
   private client: GeminiClient;
   private config: Config;
   private toolRegistry: ToolRegistry;
   private messageBus: MessageBus;
+  private repoContext?: AgentServiceOptions['repoContext'];
 
-  constructor(apiKey: string) {
-    let finalKey = apiKey;
+  constructor(options: AgentServiceOptions | string) {
+    // Support both old string API and new options API
+    const opts: AgentServiceOptions = typeof options === 'string'
+      ? { apiKey: options }
+      : options;
+
+    let finalKey = opts.apiKey;
     const settings = loadSettings();
 
     // Inject GitHub token into process.env so shell commands can use it
-    if (settings.github?.mode === 'token' && settings.github.token) {
+    if (opts.githubToken) {
+      process.env.GITHUB_TOKEN = opts.githubToken;
+      process.env.GH_TOKEN = opts.githubToken;
+    } else if (settings.github?.mode === 'token' && settings.github.token) {
       process.env.GITHUB_TOKEN = settings.github.token;
       process.env.GH_TOKEN = settings.github.token;
     }
+
+    // Store repo context for system prompt enhancement
+    this.repoContext = opts.repoContext;
 
     // Try to find existing credentials
     if (!finalKey || finalKey === 'PLACEHOLDER_KEY') {
@@ -137,7 +161,8 @@ export class AgentService {
       throw new Error("GEMINI_API_KEY is missing.");
     }
 
-    const workspaceRoot = settings.github?.workspacePath || process.cwd();
+    // Use provided workspace path, or fall back to settings, or cwd
+    const workspaceRoot = opts.workspacePath || settings.github?.workspacePath || process.cwd();
     if (!fs.existsSync(workspaceRoot)) fs.mkdirSync(workspaceRoot, { recursive: true });
 
     this.messageBus = new MessageBus();
