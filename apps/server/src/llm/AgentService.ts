@@ -166,9 +166,42 @@ export class AgentService {
         getProjectRoot: () => workspaceRoot 
       }),
 
-      // File System
-      getFileService: () => ({}),
-      getFileSystemService: () => ({}),
+      // File System - Mock implementations for server mode
+      getFileService: () => ({
+        // Returns filtered paths (no .git, node_modules, etc.)
+        filterFilesWithReport: (paths: string[], options: any) => {
+          const ignoredPatterns = ['.git', 'node_modules', '.DS_Store', '__pycache__', '.pyc', '.pyo'];
+          const filteredPaths = paths.filter(p => {
+            const parts = p.split(path.sep);
+            return !parts.some(part => ignoredPatterns.some(pattern => part.includes(pattern)));
+          });
+          return { filteredPaths, ignoredCount: paths.length - filteredPaths.length };
+        },
+        getIgnoredPaths: () => [],
+        isIgnored: () => false,
+      }),
+      getFileSystemService: () => ({
+        readTextFile: async (filePath: string) => {
+          const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspaceRoot, filePath);
+          return fs.readFileSync(fullPath, 'utf-8');
+        },
+        writeTextFile: async (filePath: string, content: string) => {
+          const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspaceRoot, filePath);
+          const dir = path.dirname(fullPath);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+          fs.writeFileSync(fullPath, content, 'utf-8');
+        },
+        exists: async (filePath: string) => {
+          const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspaceRoot, filePath);
+          return fs.existsSync(fullPath);
+        },
+        stat: async (filePath: string) => {
+          const fullPath = path.isAbsolute(filePath) ? filePath : path.join(workspaceRoot, filePath);
+          return fs.statSync(fullPath);
+        },
+      }),
       getFileExclusions: () => ({ getGlobExcludes: () => [], getReadManyFilesExcludes: () => [] }),
       getFileFilteringOptions: () => ({ respectGitIgnore: true, respectGeminiIgnore: true }),
       getFileFilteringRespectGitIgnore: () => true,
@@ -296,6 +329,7 @@ export class AgentService {
       setApprovalMode: () => {},
       getIdeMode: () => false,
       getTelemetryEnabled: () => false,
+      getUsageStatisticsEnabled: () => false,
       getContinueOnFailedApiCall: () => true,
     };
 
