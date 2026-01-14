@@ -88,6 +88,13 @@ const DEFAULT_MODEL_CONFIGS = {
       extends: 'gemini-2.5-flash-base',
       modelConfig: {},
     },
+    'codebase_investigator': {
+      extends: 'gemini-2.5-pro',
+      modelConfig: {
+        temperature: 0.1,
+        topP: 0.95,
+      },
+    },
     'chat-compression-default': {
       modelConfig: {
         model: 'gemini-2.5-pro',

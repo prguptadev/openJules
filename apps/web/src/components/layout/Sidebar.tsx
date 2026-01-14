@@ -24,7 +24,7 @@ export function Sidebar() {
         <div className="h-8 w-8 bg-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
           <Terminal className="text-white h-5 w-5" />
         </div>
-        <span className="ml-3 font-bold text-lg hidden lg:block tracking-tight text-white">OpenJules</span>
+        <span className="ml-3 font-bold text-lg hidden lg:block tracking-tight text-white">KODE</span>
       </div>
 
       <nav className="flex-1 py-6 space-y-1 px-3">

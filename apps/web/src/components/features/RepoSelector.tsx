@@ -1,16 +1,34 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { GitBranch, ChevronDown, Loader2, Github, Lock, Globe, RefreshCw, LogOut, Check } from 'lucide-react';
 import { useSession } from '../../lib/SessionContext';
 import { sessionApi } from '../../lib/session';
+import { useToast } from '../../lib/ToastContext';
 
 export function RepoSelector() {
   const { session, sessionId, isLoading: sessionLoading, refreshSession, clearSession } = useSession();
   const queryClient = useQueryClient();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { addToast } = useToast();
 
   const [showRepoDropdown, setShowRepoDropdown] = useState(false);
   const [showBranchDropdown, setShowBranchDropdown] = useState(false);
   const [repoSearch, setRepoSearch] = useState('');
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setShowRepoDropdown(false);
+        setShowBranchDropdown(false);
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   // Fetch GitHub OAuth status
   const { data: githubStatus } = useQuery({
@@ -44,15 +62,26 @@ export function RepoSelector() {
       setShowRepoDropdown(false);
       refreshSession();
       queryClient.invalidateQueries({ queryKey: ['branches'] });
+      addToast('Repository cloning started...', 'info');
+    },
+    onError: (error: any) => {
+      addToast(`Failed to select repository: ${error.message}`, 'error');
     },
   });
 
   // Change branch mutation
   const changeBranch = useMutation({
     mutationFn: (branch: string) => sessionApi.changeBranch(sessionId!, branch),
-    onSuccess: () => {
+    onMutate: () => {
+      addToast('Switching branch...', 'info');
+    },
+    onSuccess: (_, branch) => {
       setShowBranchDropdown(false);
       refreshSession();
+      addToast(`Switched to branch ${branch}`, 'success');
+    },
+    onError: (error: any) => {
+      addToast(`Failed to switch branch: ${error.message}`, 'error');
     },
   });
 
@@ -109,7 +138,7 @@ export function RepoSelector() {
 
   // Connected - show repo selector
   return (
-    <div className="bg-[#111] border border-[#222] rounded-xl p-4">
+    <div ref={containerRef} className="bg-[#111] border border-[#222] rounded-xl p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3">
           <img
@@ -148,7 +177,8 @@ export function RepoSelector() {
               setShowRepoDropdown(!showRepoDropdown);
               setShowBranchDropdown(false);
             }}
-            className="w-full bg-[#1a1a1a] hover:bg-[#222] border border-[#333] rounded-lg px-3 py-2 flex items-center justify-between text-sm transition-colors"
+            disabled={session.status === 'cloning'}
+            className="w-full bg-[#1a1a1a] hover:bg-[#222] border border-[#333] rounded-lg px-3 py-2 flex items-center justify-between text-sm transition-colors disabled:cursor-not-allowed"
           >
             <div className="flex items-center gap-2 truncate">
               {session.selectedRepo ? (
@@ -159,6 +189,12 @@ export function RepoSelector() {
                     <Globe className="h-4 w-4 text-gray-400 flex-shrink-0" />
                   )}
                   <span className="text-gray-200 truncate">{session.selectedRepo.fullName}</span>
+                  {session.status === 'cloning' && (
+                    <div className="flex items-center gap-1.5 ml-2 px-1.5 py-0.5 bg-indigo-500/10 border border-indigo-500/20 rounded text-[10px] font-medium text-indigo-400 uppercase tracking-wider">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Cloning
+                    </div>
+                  )}
                 </>
               ) : (
                 <span className="text-gray-500">Select a repository...</span>
@@ -190,7 +226,10 @@ export function RepoSelector() {
                   filteredRepos?.map((repo) => (
                     <button
                       key={repo.id}
-                      onClick={() => selectRepo.mutate({ repoId: repo.id })}
+                      onClick={() => {
+                        setShowRepoDropdown(false);
+                        selectRepo.mutate({ repoId: repo.id });
+                      }}
                       className="w-full px-3 py-2 flex items-center gap-2 hover:bg-[#222] text-left transition-colors"
                     >
                       {repo.private ? (
@@ -246,7 +285,10 @@ export function RepoSelector() {
                   branches?.map((branch) => (
                     <button
                       key={branch.name}
-                      onClick={() => changeBranch.mutate(branch.name)}
+                      onClick={() => {
+                        setShowBranchDropdown(false);
+                        changeBranch.mutate(branch.name);
+                      }}
                       className="w-full px-3 py-2 flex items-center gap-2 hover:bg-[#222] text-left transition-colors"
                     >
                       <GitBranch className="h-4 w-4 text-gray-400" />
@@ -272,7 +314,7 @@ export function RepoSelector() {
           {session.status === 'cloning' && (
             <>
               <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />
-              <span className="text-sm text-indigo-400">Cloning repository...</span>
+              <span className="text-sm text-indigo-400">Repository cloning started...</span>
             </>
           )}
           {session.status === 'ready' && (

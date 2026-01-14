@@ -32,8 +32,8 @@ export function TaskInput() {
 
   const isSessionReady = session?.status === 'ready';
   const placeholderText = isSessionReady
-    ? `Ask Jules to work on ${session?.selectedRepo?.name}...`
-    : 'Describe a task for Jules...';
+    ? `Ask KODE to work on ${session?.selectedRepo?.name}...`
+    : 'Describe a task for KODE...';
 
   return (
     <div className="bg-[#111] border border-[#222] rounded-2xl p-1 shadow-lg shadow-black/50">

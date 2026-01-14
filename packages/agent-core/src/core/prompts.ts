@@ -119,10 +119,8 @@ export function getCoreSystemPrompt(
 - **Explain Before Acting:** Never call tools in silence. You MUST provide a concise, one-sentence explanation of your intent or strategy immediately before executing tool calls. This is essential for transparency, especially when confirming a request or answering a question. Silence is only acceptable for repetitive, low-level discovery operations (e.g., sequential file reads) where narration would be noisy.`
     : ``;
 
-  const enableCodebaseInvestigator = config
-    .getToolRegistry()
-    .getAllToolNames()
-    .includes(CodebaseInvestigatorAgent.name);
+  const enableCodebaseInvestigator =
+    config.getCodebaseInvestigatorSettings()?.enabled ?? false;
 
   const enableWriteTodosTool = config
     .getToolRegistry()

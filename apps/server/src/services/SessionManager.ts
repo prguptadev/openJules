@@ -6,8 +6,11 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { v4 as uuidv4 } from 'uuid';
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { GitHubRepo, encryptToken, decryptToken, githubService } from './GitHubService.js';
+
+const execAsync = promisify(exec);
 
 export interface SelectedRepo {
   id: number;
@@ -162,8 +165,6 @@ export class SessionManager {
       throw new Error('Session not found');
     }
 
-    const selectedBranch = branch || repo.defaultBranch;
-
     // Update session
     session.selectedRepo = {
       id: repo.id,
@@ -174,9 +175,9 @@ export class SessionManager {
       cloneUrl: repo.cloneUrl,
       private: repo.private,
     };
-    session.selectedBranch = selectedBranch;
+    session.selectedBranch = branch || null; // Use null to signify "use remote default"
     session.status = 'cloning';
-    session.statusMessage = 'Cloning repository...';
+    session.statusMessage = 'Repository cloning started...';
     session.lastActiveAt = new Date().toISOString();
     this.saveSessions();
 
@@ -216,16 +217,27 @@ export class SessionManager {
 
     // Clone the repository
     try {
-      execSync(`git clone --branch ${session.selectedBranch} --single-branch ${cloneUrl} ${repoPath}`, {
+      // If a specific branch was requested, use --branch. Otherwise let git pick default.
+      const branchArg = session.selectedBranch ? `--branch ${session.selectedBranch} ` : '';
+      
+      await execAsync(`git clone ${branchArg}--single-branch ${cloneUrl} ${repoPath}`, {
         cwd: session.workspacePath,
-        stdio: 'pipe',
         env: {
           ...process.env,
           GIT_TERMINAL_PROMPT: '0',
           GITHUB_TOKEN: token,
           GH_TOKEN: token,
         },
+        maxBuffer: 1024 * 1024 * 10, // 10MB
       });
+
+      // Detect the branch we actually got if we didn't specify one
+      if (!session.selectedBranch) {
+        const { stdout } = await execAsync(`git rev-parse --abbrev-ref HEAD`, {
+          cwd: repoPath,
+        });
+        session.selectedBranch = stdout.trim();
+      }
 
       // Check for AGENTS.md
       const agentsMdPath = path.join(repoPath, 'AGENTS.md');
@@ -265,28 +277,28 @@ export class SessionManager {
       // First try to fetch the specific branch to ensure we have the latest refs
       // We explicitly fetch into refs/remotes/origin/<branch> because single-branch clones
       // do not update other remote refs by default.
-      execSync(`git fetch origin ${branch}:refs/remotes/origin/${branch}`, {
+      await execAsync(`git fetch origin ${branch}:refs/remotes/origin/${branch}`, {
         cwd: repoPath,
-        stdio: 'pipe',
         env: {
           ...process.env,
           GIT_TERMINAL_PROMPT: '0',
           GITHUB_TOKEN: token,
           GH_TOKEN: token,
         },
+        maxBuffer: 1024 * 1024 * 10,
       });
 
       // Try checking out. 
       // If local branch exists: git checkout <branch>
       // If only remote exists: git checkout -t origin/<branch> or just git checkout <branch> usually works if unambiguous
       // We'll use a safer approach: checkout -B ensures we reset/create local pointer to match origin
-      execSync(`git checkout -B ${branch} origin/${branch}`, {
+      await execAsync(`git checkout -B ${branch} origin/${branch}`, {
         cwd: repoPath,
-        stdio: 'pipe',
         env: {
           ...process.env,
           GIT_TERMINAL_PROMPT: '0',
         },
+        maxBuffer: 1024 * 1024 * 10,
       });
 
       session.selectedBranch = branch;

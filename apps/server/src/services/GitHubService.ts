@@ -163,46 +163,78 @@ export class GitHubService {
     const repos: GitHubRepo[] = [];
     let page = 1;
     const perPage = 100;
+    const MAX_PAGES = 10; // Safety limit: fetch max 1000 repos to avoid timeouts
 
     // Fetch all pages
-    while (true) {
-      const response = await axios.get(`${GITHUB_API_URL}/user/repos`, {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/vnd.github.v3+json',
-        },
-        params: {
-          per_page: perPage,
-          page: page,
-          sort: 'updated',
-          direction: 'desc',
-        },
-      });
-
-      for (const repo of response.data) {
-        repos.push({
-          id: repo.id,
-          name: repo.name,
-          fullName: repo.full_name,
-          owner: repo.owner.login,
-          description: repo.description,
-          private: repo.private,
-          defaultBranch: repo.default_branch,
-          cloneUrl: repo.clone_url,
-          htmlUrl: repo.html_url,
-          language: repo.language,
-          updatedAt: repo.updated_at,
+    while (page <= MAX_PAGES) {
+      try {
+        const response = await axios.get(`${GITHUB_API_URL}/user/repos`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            Accept: 'application/vnd.github.v3+json',
+          },
+          params: {
+            per_page: perPage,
+            page: page,
+            sort: 'updated',
+            direction: 'desc',
+          },
         });
-      }
 
-      // Check if there are more pages
-      if (response.data.length < perPage) {
-        break;
+        for (const repo of response.data) {
+          repos.push({
+            id: repo.id,
+            name: repo.name,
+            fullName: repo.full_name,
+            owner: repo.owner.login,
+            description: repo.description,
+            private: repo.private,
+            defaultBranch: repo.default_branch,
+            cloneUrl: repo.clone_url,
+            htmlUrl: repo.html_url,
+            language: repo.language,
+            updatedAt: repo.updated_at,
+          });
+        }
+
+        // Check if there are more pages
+        if (response.data.length < perPage) {
+          break;
+        }
+        page++;
+      } catch (error) {
+        console.error(`Failed to fetch repos page ${page}:`, error);
+        break; // Stop on error but return what we have
       }
-      page++;
     }
 
     return repos;
+  }
+
+  /**
+   * Get repository details by ID
+   */
+  async getRepoById(accessToken: string, repoId: number): Promise<GitHubRepo> {
+    const response = await axios.get(`${GITHUB_API_URL}/repositories/${repoId}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github.v3+json',
+      },
+    });
+
+    return {
+      id: response.data.id,
+      name: response.data.name,
+      fullName: response.data.full_name,
+      owner: response.data.owner.login,
+      description: response.data.description,
+      private: response.data.private,
+      defaultBranch: response.data.default_branch,
+      cloneUrl: response.data.clone_url,
+      htmlUrl: response.data.html_url,
+      language: response.data.language,
+      updatedAt: response.data.updated_at,
+    };
   }
 
   /**

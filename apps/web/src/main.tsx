@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { SessionProvider } from './lib/SessionContext';
+import { ToastProvider } from './lib/ToastContext';
 import './index.css';
 
 const queryClient = new QueryClient();
@@ -13,7 +14,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <SessionProvider>
-          <App />
+          <ToastProvider>
+            <App />
+          </ToastProvider>
         </SessionProvider>
       </BrowserRouter>
     </QueryClientProvider>

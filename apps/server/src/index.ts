@@ -385,12 +385,7 @@ app.post('/api/sessions/:id/select-repo', async (req, res) => {
 
   try {
     // Get full repo details
-    const repos = await githubService.listRepos(token);
-    const repo = repos.find(r => r.id === repoId);
-
-    if (!repo) {
-      return res.status(404).json({ error: 'Repository not found' });
-    }
+    const repo = await githubService.getRepoById(token, repoId);
 
     // Select the repo (this triggers cloning in background)
     const updatedSession = await sessionManager.selectRepo(req.params.id, repo, branch);
