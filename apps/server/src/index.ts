@@ -51,6 +51,39 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+// Tools that require user approval before execution
+const TOOLS_REQUIRING_APPROVAL = ['shell', 'write_file', 'edit'];
+
+// Check if any tool calls require approval
+function requiresApproval(toolCalls: any[]): { needs: boolean; dangerous: any[] } {
+  const dangerous = toolCalls.filter(tc =>
+    TOOLS_REQUIRING_APPROVAL.includes(tc.name.toLowerCase())
+  );
+  return { needs: dangerous.length > 0, dangerous };
+}
+
+// Format tool calls for display in approval message
+function formatToolCallsForApproval(toolCalls: any[]): string {
+  return toolCalls.map(tc => {
+    if (tc.name.toLowerCase() === 'shell') {
+      return `\`${tc.args?.command || 'unknown command'}\``;
+    } else if (tc.name.toLowerCase() === 'write_file') {
+      return `Write to \`${tc.args?.path || 'unknown file'}\``;
+    } else if (tc.name.toLowerCase() === 'edit') {
+      return `Edit \`${tc.args?.filePath || 'unknown file'}\``;
+    }
+    return `${tc.name}(...)`;
+  }).join('\n- ');
+}
+
+// Custom error to signal approval is needed
+class ApprovalRequiredError extends Error {
+  constructor() {
+    super('Approval required');
+    this.name = 'ApprovalRequiredError';
+  }
+}
+
 const workerFn = async (job: Job) => {
   const { command, cwd, sessionId, repo, branch } = job.payload;
 
@@ -103,8 +136,31 @@ const workerFn = async (job: Job) => {
 
     let fullResponse = "";
     const maxTurns = 50;  // Safety limit
-    let turnCount = 0;
+    let turnCount = job.turnCount || 0;  // Resume from stored turn count if available
     let currentMessage = command;
+
+    // Check if we're resuming from an approval - execute stored tool calls first
+    const pendingToolCalls = jobManager.getPendingToolCalls(job.id);
+    if (pendingToolCalls && pendingToolCalls.length > 0) {
+      jobManager.addLog(job.id, `[Resuming after approval - executing ${pendingToolCalls.length} tool call(s)]`);
+
+      const toolResults = await agent.executeToolCalls(pendingToolCalls);
+
+      for (const result of toolResults) {
+        jobManager.addLog(job.id, `[Tool ${result.name}] Exit: ${result.exitCode ?? 'ok'}, Output: ${(result.output || '').slice(0, 300)}...`);
+        jobManager.addMessage(job.id, {
+          role: 'tool_result',
+          content: result.output || result.error || 'completed',
+          metadata: { toolName: result.name, exitCode: result.exitCode },
+        });
+      }
+
+      // Clear pending tool calls and continue with tool results
+      jobManager.clearPendingToolCalls(job.id);
+      currentMessage = `Tool execution results:\n${toolResults.map(r =>
+        `${r.name}: ${r.output || r.error || 'completed'}`
+      ).join('\n')}`;
+    }
 
     // Main agent loop - continues until no more tool calls
     while (turnCount < maxTurns) {
@@ -178,6 +234,26 @@ const workerFn = async (job: Job) => {
 
       // Execute any pending tool calls
       if (pendingToolCalls.length > 0) {
+        // Check if any tool calls require approval
+        const approvalCheck = requiresApproval(pendingToolCalls);
+
+        if (approvalCheck.needs) {
+          const commandSummary = formatToolCallsForApproval(approvalCheck.dangerous);
+          jobManager.addLog(job.id, `[Approval Required] Dangerous operation detected`);
+
+          // Request approval and store pending tool calls
+          jobManager.requestApproval(
+            job.id,
+            commandSummary,
+            `The agent wants to execute the following operation(s):\n- ${commandSummary}`,
+            pendingToolCalls,
+            turnCount
+          );
+
+          // Throw to pause the job - it will be re-queued after approval
+          throw new ApprovalRequiredError();
+        }
+
         jobManager.addLog(job.id, `[Executing ${pendingToolCalls.length} tool call(s)...]`);
 
         const toolResults = await agent.executeToolCalls(pendingToolCalls);

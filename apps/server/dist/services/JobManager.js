@@ -103,7 +103,7 @@ class JobManager {
             }
         }
     }
-    requestApproval(jobId, command, reason) {
+    requestApproval(jobId, command, reason, toolCalls, turnCount) {
         const job = this.getJob(jobId);
         if (!job)
             throw new Error('Job not found');
@@ -117,6 +117,13 @@ class JobManager {
         };
         job.pendingApproval = approval;
         job.status = 'waiting_approval';
+        // Store pending tool calls and turn count for resumption
+        if (toolCalls) {
+            job.pendingToolCalls = toolCalls;
+        }
+        if (turnCount !== undefined) {
+            job.turnCount = turnCount;
+        }
         // Add approval request message
         this.addMessage(jobId, {
             role: 'approval_request',
@@ -125,6 +132,21 @@ class JobManager {
         });
         this.saveJobs();
         return approval;
+    }
+    getPendingToolCalls(jobId) {
+        const job = this.getJob(jobId);
+        return job?.pendingToolCalls;
+    }
+    getTurnCount(jobId) {
+        const job = this.getJob(jobId);
+        return job?.turnCount;
+    }
+    clearPendingToolCalls(jobId) {
+        const job = this.getJob(jobId);
+        if (job) {
+            job.pendingToolCalls = undefined;
+            this.saveJobs();
+        }
     }
     resolveApproval(jobId, approvalId, approved) {
         const job = this.getJob(jobId);
@@ -173,12 +195,21 @@ class JobManager {
             const result = await this.worker(job);
             job.status = 'completed';
             job.result = result;
+            job.completedAt = new Date().toISOString();
             this.addLog(job.id, 'Job completed successfully');
         }
         catch (error) {
-            job.status = 'failed';
-            job.result = { error: error.message };
-            this.addLog(job.id, `Job failed: ${error.message}`);
+            // Check if this is an approval pause - don't mark as failed
+            if (error.name === 'ApprovalRequiredError' || job.status === 'waiting_approval') {
+                this.addLog(job.id, 'Job paused - waiting for approval');
+                // Status is already set to waiting_approval by requestApproval()
+            }
+            else {
+                job.status = 'failed';
+                job.result = { error: error.message };
+                job.completedAt = new Date().toISOString();
+                this.addLog(job.id, `Job failed: ${error.message}`);
+            }
         }
         finally {
             this.saveJobs();
