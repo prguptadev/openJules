@@ -60,8 +60,14 @@ class JobManager {
             payload,
             status: 'pending',
             logs: [],
+            messages: [],
             createdAt: new Date().toISOString()
         };
+        // Add user message from the command
+        this.addMessage(id, {
+            role: 'user',
+            content: payload.command,
+        }, job);
         this.jobs.set(id, job);
         this.queue.push(id);
         this.saveJobs();
@@ -70,12 +76,81 @@ class JobManager {
     getJob(id) {
         return this.jobs.get(id);
     }
+    getActiveJobs() {
+        return Array.from(this.jobs.values()).filter(job => job.status === 'pending' || job.status === 'running' || job.status === 'waiting_approval');
+    }
+    getCompletedJobs() {
+        return Array.from(this.jobs.values()).filter(job => job.status === 'completed' || job.status === 'failed');
+    }
     addLog(id, message) {
         const job = this.getJob(id);
         if (job) {
             job.logs.push(`[${new Date().toISOString()}] ${message}`);
             this.saveJobs();
         }
+    }
+    addMessage(id, message, existingJob) {
+        const job = existingJob || this.getJob(id);
+        if (job) {
+            const chatMessage = {
+                id: (0, uuid_1.v4)(),
+                timestamp: new Date().toISOString(),
+                ...message,
+            };
+            job.messages.push(chatMessage);
+            if (!existingJob) {
+                this.saveJobs();
+            }
+        }
+    }
+    requestApproval(jobId, command, reason) {
+        const job = this.getJob(jobId);
+        if (!job)
+            throw new Error('Job not found');
+        const approval = {
+            id: (0, uuid_1.v4)(),
+            jobId,
+            command,
+            reason,
+            timestamp: new Date().toISOString(),
+            status: 'pending',
+        };
+        job.pendingApproval = approval;
+        job.status = 'waiting_approval';
+        // Add approval request message
+        this.addMessage(jobId, {
+            role: 'approval_request',
+            content: `**Approval Required**\n\nCommand: \`${command}\`\n\nReason: ${reason}`,
+            metadata: { approvalId: approval.id },
+        });
+        this.saveJobs();
+        return approval;
+    }
+    resolveApproval(jobId, approvalId, approved) {
+        const job = this.getJob(jobId);
+        if (!job || !job.pendingApproval || job.pendingApproval.id !== approvalId) {
+            return false;
+        }
+        job.pendingApproval.status = approved ? 'approved' : 'rejected';
+        // Add resolution message
+        this.addMessage(jobId, {
+            role: 'system',
+            content: approved ? '✅ Command approved' : '❌ Command rejected',
+            metadata: { approvalId, isApproved: approved },
+        });
+        if (approved) {
+            job.status = 'running';
+            // Re-queue the job to continue processing
+            this.queue.unshift(jobId);
+        }
+        else {
+            job.status = 'failed';
+            job.result = { error: 'Command rejected by user' };
+            job.completedAt = new Date().toISOString();
+        }
+        job.pendingApproval = undefined;
+        this.saveJobs();
+        return true;
     }
     async processQueue() {
         if (this.processing || this.queue.length === 0)

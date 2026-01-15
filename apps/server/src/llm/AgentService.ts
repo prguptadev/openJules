@@ -1,11 +1,12 @@
-import { 
+import {
   GeminiClient,
-  ToolRegistry, 
-  ShellTool, 
-  ReadFileTool, 
-  WriteFileTool, 
-  LSTool, 
-  GrepTool, 
+  ToolRegistry,
+  ShellTool,
+  ReadFileTool,
+  WriteFileTool,
+  EditTool,
+  LSTool,
+  GrepTool,
   GlobTool,
   MessageBus,
   getCoreSystemPrompt,
@@ -88,11 +89,14 @@ const DEFAULT_MODEL_CONFIGS = {
       extends: 'gemini-2.5-flash-base',
       modelConfig: {},
     },
-    'codebase_investigator': {
+    'codebase_investigator-config': {
       extends: 'gemini-2.5-pro',
       modelConfig: {
-        temperature: 0.1,
-        topP: 0.95,
+        model: 'gemini-2.5-pro',
+        generateContentConfig: {
+          temperature: 0.1,
+          topP: 0.95,
+        },
       },
     },
     'chat-compression-default': {
@@ -424,6 +428,7 @@ Use \`delegate_to_agent\` for complex tasks requiring specialized analysis.
     if (settings.enabledSkills.filesystem) {
       this.toolRegistry.registerTool(new ReadFileTool(this.config, this.messageBus));
       this.toolRegistry.registerTool(new WriteFileTool(this.config, this.messageBus));
+      this.toolRegistry.registerTool(new EditTool(this.config, this.messageBus));
       this.toolRegistry.registerTool(new LSTool(this.config, this.messageBus));
       this.toolRegistry.registerTool(new GrepTool(this.config, this.messageBus));
       this.toolRegistry.registerTool(new GlobTool(this.config, this.messageBus));

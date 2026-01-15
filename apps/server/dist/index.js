@@ -134,21 +134,33 @@ const workerFn = async (job) => {
             const eventStream = await agent.sendMessage(currentMessage);
             const pendingToolCalls = [];
             let hasFinished = false;
+            let currentTurnContent = "";
             // Process events from this turn
             for await (const event of eventStream) {
                 switch (event.type) {
                     case 'content':
                         fullResponse += event.value;
+                        currentTurnContent += event.value;
                         jobManager.addLog(job.id, event.value);
                         break;
                     case 'thought':
                         // @ts-ignore
-                        jobManager.addLog(job.id, `[Thinking] ${event.value.summary || '...'}`);
+                        const thoughtSummary = event.value.summary || '...';
+                        jobManager.addLog(job.id, `[Thinking] ${thoughtSummary}`);
+                        jobManager.addMessage(job.id, {
+                            role: 'thinking',
+                            content: thoughtSummary,
+                        });
                         break;
                     case 'tool_call_request':
                         // @ts-ignore
                         const toolRequest = event.value;
                         jobManager.addLog(job.id, `[Tool Call] ${toolRequest.name}(${JSON.stringify(toolRequest.args).slice(0, 100)}...)`);
+                        jobManager.addMessage(job.id, {
+                            role: 'tool_call',
+                            content: `Calling \`${toolRequest.name}\``,
+                            metadata: { toolName: toolRequest.name, toolArgs: toolRequest.args },
+                        });
                         pendingToolCalls.push(toolRequest);
                         break;
                     case 'tool_call_response':
@@ -160,7 +172,12 @@ const workerFn = async (job) => {
                         break;
                     case 'error':
                         // @ts-ignore
-                        jobManager.addLog(job.id, `[Error] ${event.value.error?.message || 'Unknown error'}`);
+                        const errorMsg = event.value.error?.message || 'Unknown error';
+                        jobManager.addLog(job.id, `[Error] ${errorMsg}`);
+                        jobManager.addMessage(job.id, {
+                            role: 'system',
+                            content: `❌ Error: ${errorMsg}`,
+                        });
                         break;
                     case 'finished':
                         // @ts-ignore
@@ -169,12 +186,24 @@ const workerFn = async (job) => {
                         break;
                 }
             }
+            // Add assistant response if there was content
+            if (currentTurnContent.trim()) {
+                jobManager.addMessage(job.id, {
+                    role: 'assistant',
+                    content: currentTurnContent,
+                });
+            }
             // Execute any pending tool calls
             if (pendingToolCalls.length > 0) {
                 jobManager.addLog(job.id, `[Executing ${pendingToolCalls.length} tool call(s)...]`);
                 const toolResults = await agent.executeToolCalls(pendingToolCalls);
                 for (const result of toolResults) {
                     jobManager.addLog(job.id, `[Tool ${result.name}] Exit: ${result.exitCode ?? 'ok'}, Output: ${(result.output || '').slice(0, 300)}...`);
+                    jobManager.addMessage(job.id, {
+                        role: 'tool_result',
+                        content: result.output || result.error || 'completed',
+                        metadata: { toolName: result.name, exitCode: result.exitCode },
+                    });
                 }
                 // Continue conversation with tool results
                 currentMessage = `Tool execution results:\n${toolResults.map(r => `${r.name}: ${r.output || r.error || 'completed'}`).join('\n')}`;
@@ -229,7 +258,30 @@ app.get('/api/tasks/:id', (req, res) => {
         return res.status(404).json({ error: 'Job not found' });
     res.json(job);
 });
-app.get('/api/tasks', (req, res) => {
+// Get active tasks (pending, running, waiting_approval)
+app.get('/api/tasks/filter/active', (_req, res) => {
+    const jobs = jobManager.getActiveJobs();
+    res.json(jobs);
+});
+// Get completed tasks (completed, failed)
+app.get('/api/tasks/filter/history', (_req, res) => {
+    const jobs = jobManager.getCompletedJobs();
+    res.json(jobs);
+});
+// Approve or reject a pending approval
+app.post('/api/tasks/:id/approval', (req, res) => {
+    const { approvalId, approved } = req.body;
+    const jobId = req.params.id;
+    if (!approvalId || typeof approved !== 'boolean') {
+        return res.status(400).json({ error: 'approvalId and approved (boolean) are required' });
+    }
+    const success = jobManager.resolveApproval(jobId, approvalId, approved);
+    if (!success) {
+        return res.status(404).json({ error: 'Approval not found or already resolved' });
+    }
+    res.json({ success: true, approved });
+});
+app.get('/api/tasks', (_req, res) => {
     // @ts-ignore
     const jobs = Array.from(jobManager['jobs'].values());
     res.json(jobs);
@@ -362,11 +414,7 @@ app.post('/api/sessions/:id/select-repo', async (req, res) => {
     }
     try {
         // Get full repo details
-        const repos = await GitHubService_js_1.githubService.listRepos(token);
-        const repo = repos.find(r => r.id === repoId);
-        if (!repo) {
-            return res.status(404).json({ error: 'Repository not found' });
-        }
+        const repo = await GitHubService_js_1.githubService.getRepoById(token, repoId);
         // Select the repo (this triggers cloning in background)
         const updatedSession = await SessionManager_js_1.sessionManager.selectRepo(req.params.id, repo, branch);
         res.json({

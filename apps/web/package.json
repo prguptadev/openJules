@@ -11,6 +11,7 @@
   "dependencies": {
     "@open-jules/shared": "*",
     "@tanstack/react-query": "^5.90.16",
+    "@types/react-syntax-highlighter": "^15.5.13",
     "axios": "^1.13.2",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
@@ -18,8 +19,11 @@
     "lucide-react": "^0.309.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.12.0",
+    "react-syntax-highlighter": "^16.1.0",
     "reactflow": "^11.10.1",
+    "remark-gfm": "^4.0.1",
     "socket.io-client": "^4.7.4",
     "tailwind-merge": "^3.4.0"
   },

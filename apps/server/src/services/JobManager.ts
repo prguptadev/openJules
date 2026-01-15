@@ -5,6 +5,31 @@ import os from 'os';
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'waiting_approval';
 
+export type MessageRole = 'user' | 'assistant' | 'tool_call' | 'tool_result' | 'thinking' | 'system' | 'approval_request';
+
+export interface ChatMessage {
+  id: string;
+  role: MessageRole;
+  content: string;
+  timestamp: string;
+  metadata?: {
+    toolName?: string;
+    toolArgs?: any;
+    exitCode?: number;
+    approvalId?: string;
+    isApproved?: boolean;
+  };
+}
+
+export interface ApprovalRequest {
+  id: string;
+  jobId: string;
+  command: string;
+  reason: string;
+  timestamp: string;
+  status: 'pending' | 'approved' | 'rejected';
+}
+
 export interface Job {
   id: string;
   type: string;
@@ -12,7 +37,10 @@ export interface Job {
   status: JobStatus;
   result?: any;
   logs: string[];
-  createdAt: string; // Changed to string for JSON serialization
+  messages: ChatMessage[];
+  pendingApproval?: ApprovalRequest;
+  createdAt: string;
+  completedAt?: string;
 }
 
 const JOBS_FILE = path.join(os.homedir(), '.openjules', 'jobs.json');
@@ -69,8 +97,16 @@ export class JobManager {
       payload,
       status: 'pending',
       logs: [],
+      messages: [],
       createdAt: new Date().toISOString()
     };
+
+    // Add user message from the command
+    this.addMessage(id, {
+      role: 'user',
+      content: payload.command,
+    }, job);
+
     this.jobs.set(id, job);
     this.queue.push(id);
     this.saveJobs();
@@ -81,12 +117,96 @@ export class JobManager {
     return this.jobs.get(id);
   }
 
+  getActiveJobs(): Job[] {
+    return Array.from(this.jobs.values()).filter(
+      job => job.status === 'pending' || job.status === 'running' || job.status === 'waiting_approval'
+    );
+  }
+
+  getCompletedJobs(): Job[] {
+    return Array.from(this.jobs.values()).filter(
+      job => job.status === 'completed' || job.status === 'failed'
+    );
+  }
+
   addLog(id: string, message: string) {
     const job = this.getJob(id);
     if (job) {
       job.logs.push(`[${new Date().toISOString()}] ${message}`);
       this.saveJobs();
     }
+  }
+
+  addMessage(id: string, message: Omit<ChatMessage, 'id' | 'timestamp'>, existingJob?: Job) {
+    const job = existingJob || this.getJob(id);
+    if (job) {
+      const chatMessage: ChatMessage = {
+        id: uuidv4(),
+        timestamp: new Date().toISOString(),
+        ...message,
+      };
+      job.messages.push(chatMessage);
+      if (!existingJob) {
+        this.saveJobs();
+      }
+    }
+  }
+
+  requestApproval(jobId: string, command: string, reason: string): ApprovalRequest {
+    const job = this.getJob(jobId);
+    if (!job) throw new Error('Job not found');
+
+    const approval: ApprovalRequest = {
+      id: uuidv4(),
+      jobId,
+      command,
+      reason,
+      timestamp: new Date().toISOString(),
+      status: 'pending',
+    };
+
+    job.pendingApproval = approval;
+    job.status = 'waiting_approval';
+
+    // Add approval request message
+    this.addMessage(jobId, {
+      role: 'approval_request',
+      content: `**Approval Required**\n\nCommand: \`${command}\`\n\nReason: ${reason}`,
+      metadata: { approvalId: approval.id },
+    });
+
+    this.saveJobs();
+    return approval;
+  }
+
+  resolveApproval(jobId: string, approvalId: string, approved: boolean): boolean {
+    const job = this.getJob(jobId);
+    if (!job || !job.pendingApproval || job.pendingApproval.id !== approvalId) {
+      return false;
+    }
+
+    job.pendingApproval.status = approved ? 'approved' : 'rejected';
+
+    // Add resolution message
+    this.addMessage(jobId, {
+      role: 'system',
+      content: approved ? '✅ Command approved' : '❌ Command rejected',
+      metadata: { approvalId, isApproved: approved },
+    });
+
+    if (approved) {
+      job.status = 'running';
+      // Re-queue the job to continue processing
+      this.queue.unshift(jobId);
+    } else {
+      job.status = 'failed';
+      job.result = { error: 'Command rejected by user' };
+      job.completedAt = new Date().toISOString();
+    }
+
+    job.pendingApproval = undefined;
+    this.saveJobs();
+    return true;
   }
 
   private async processQueue() {
