@@ -1,0 +1,72 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  password     String    // Hashed password
+  name         String?
+  avatarUrl    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  
+  sessions     Session[]
+}
+
+model Session {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+
+  // Repository Context
+  repoOwner      String
+  repoName       String
+  repoFullName   String
+  repoUrl        String?   // Original clone URL (for URL-based clones)
+  branch         String    @default("main")
+  isPrivate      Boolean   @default(false)
+
+  // Clone Method & Credentials
+  cloneMethod    String    @default("oauth")  // 'oauth' | 'https' | 'ssh'
+  credentialType String?   // 'pat' | 'ssh_key' | null (for public repos)
+  encryptedCredential String? // Encrypted PAT or path to SSH key
+  githubToken    String?   // Encrypted (for OAuth sessions)
+
+  // Workspace
+  workspacePath  String
+  status         String    @default("idle") // idle, cloning, ready, error, analyzing
+  statusMessage  String?
+
+  // Project Understanding (Mind Map)
+  projectContext String?   // JSON string of project analysis
+
+  createdAt      DateTime  @default(now())
+  lastActiveAt   DateTime  @default(now())
+
+  tasks          Task[]
+
+  @@unique([userId, repoFullName]) // One session per repo per user
+}
+
+model Task {
+  id             String    @id @default(uuid())
+  sessionId      String
+  session        Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  command        String
+  status         String    // pending, running, completed, failed, waiting_approval
+  messages       String    // JSON string of chat history
+  logs           String?   // JSON string of logs
+  
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}

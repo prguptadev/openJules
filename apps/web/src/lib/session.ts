@@ -94,4 +94,16 @@ export const sessionApi = {
     const res = await axios.delete(`/api/sessions/${sessionId}`);
     return res.data;
   },
+
+  // Clone by URL (without GitHub OAuth)
+  cloneByUrl: async (url: string, authType: 'none' | 'pat' | 'ssh', credential?: string) => {
+    const res = await axios.post('/api/clone-url', { url, authType, credential });
+    return res.data as { sessionId: string; status: string; message: string; repo: string };
+  },
+
+  // List all sessions for current user
+  listSessions: async () => {
+    const res = await axios.get('/api/sessions');
+    return res.data as Session[];
+  },
 };
