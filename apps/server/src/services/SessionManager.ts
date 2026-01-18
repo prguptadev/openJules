@@ -233,10 +233,17 @@ export class SessionManager {
 
       // Detect the branch we actually got if we didn't specify one
       if (!session.selectedBranch) {
-        const { stdout } = await execAsync(`git rev-parse --abbrev-ref HEAD`, {
-          cwd: repoPath,
-        });
-        session.selectedBranch = stdout.trim();
+        try {
+          const { stdout } = await execAsync(`git rev-parse --abbrev-ref HEAD`, {
+            cwd: repoPath,
+          });
+          const branch = stdout.trim();
+          // Handle detached HEAD or empty repo
+          session.selectedBranch = (branch && branch !== 'HEAD') ? branch : session.selectedRepo.defaultBranch || 'main';
+        } catch {
+          // Fallback to default branch if detection fails (empty repo, etc.)
+          session.selectedBranch = session.selectedRepo.defaultBranch || 'main';
+        }
       }
 
       // Check for AGENTS.md
