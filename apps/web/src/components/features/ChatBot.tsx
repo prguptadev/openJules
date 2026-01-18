@@ -24,7 +24,6 @@ import {
   ChevronDown,
   ChevronRight,
   Terminal,
-  Copy,
   Sparkles,
 } from 'lucide-react';
 
@@ -417,7 +416,6 @@ export function ChatBot() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const bottomRef = useRef<HTMLDivElement>(null);
-  const [input, setInput] = useState('');
   const { session, sessionId } = useSession();
 
   // Fetch task data
@@ -452,14 +450,6 @@ export function ChatBot() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [task?.messages]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (input.trim()) {
-      createTask.mutate(input);
-      setInput('');
-    }
-  };
 
   const handleNewChat = (command: string) => {
     createTask.mutate(command);

@@ -234,10 +234,14 @@ const workerFn = async (job: Job) => {
 
       // Execute any pending tool calls
       if (pendingToolCalls.length > 0) {
-        // Check if any tool calls require approval
+        // Check if approval is enabled in settings
+        const settings = loadSettings();
+        const approvalEnabled = settings.requireApproval !== false; // Default to true if not set
+
+        // Check if any tool calls require approval (only if approval is enabled)
         const approvalCheck = requiresApproval(pendingToolCalls);
 
-        if (approvalCheck.needs) {
+        if (approvalEnabled && approvalCheck.needs) {
           const commandSummary = formatToolCallsForApproval(approvalCheck.dangerous);
           jobManager.addLog(job.id, `[Approval Required] Dangerous operation detected`);
 

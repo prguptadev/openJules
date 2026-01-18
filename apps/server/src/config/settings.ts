@@ -7,6 +7,7 @@ const SETTINGS_FILE = path.join(CONFIG_DIR, 'settings.json');
 
 export interface AppSettings {
   activeModel: string;
+  requireApproval: boolean; // When false, dangerous operations execute immediately without asking
   enabledSkills: {
     git: boolean;
     terminal: boolean;
@@ -23,6 +24,7 @@ export interface AppSettings {
 
 const DEFAULT_SETTINGS: AppSettings = {
   activeModel: 'gemini-2.0-flash',
+  requireApproval: true, // Default: require approval for dangerous operations
   enabledSkills: {
     git: true,
     terminal: true,

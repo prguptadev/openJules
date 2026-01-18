@@ -54,8 +54,7 @@ export function Sidebar() {
         <div className="flex items-center gap-3 px-2">
           <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500" />
           <div className="hidden lg:block">
-            <p className="text-sm font-medium text-white">Dev User</p>
-            <p className="text-xs text-gray-500">Pro Plan</p>
+            <p className="text-sm font-medium text-white">Prashant Gupta</p>
           </div>
         </div>
       </div>

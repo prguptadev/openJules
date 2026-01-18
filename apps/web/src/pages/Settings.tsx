@@ -1,7 +1,17 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Key, CheckCircle, Loader2 } from 'lucide-react';
+import { Key, CheckCircle, Loader2, ShieldCheck, ShieldOff } from 'lucide-react';
+
+interface AppSettings {
+  requireApproval: boolean;
+  activeModel: string;
+  enabledSkills: {
+    git: boolean;
+    terminal: boolean;
+    filesystem: boolean;
+  };
+}
 
 export default function Settings() {
   const [apiKey, setApiKey] = useState('');
@@ -12,6 +22,25 @@ export default function Settings() {
     queryFn: async () => {
       const res = await axios.get('/api/auth/status');
       return res.data;
+    }
+  });
+
+  // Fetch current settings
+  const { data: settings, isLoading: settingsLoading } = useQuery({
+    queryKey: ['settings'],
+    queryFn: async () => {
+      const res = await axios.get('/api/settings');
+      return res.data as AppSettings;
+    }
+  });
+
+  // Update settings mutation
+  const updateSettings = useMutation({
+    mutationFn: async (newSettings: Partial<AppSettings>) => {
+      return axios.post('/api/settings', newSettings);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
     }
   });
 
@@ -70,14 +99,59 @@ export default function Settings() {
             </p>
           </div>
           
-          <button 
-            type="submit" 
+          <button
+            type="submit"
             disabled={!apiKey.trim() || saveKey.isPending}
             className="bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {saveKey.isPending ? 'Saving...' : 'Save API Key'}
           </button>
         </form>
+      </div>
+
+      {/* Approval System Settings */}
+      <div className="bg-[#111] border border-[#222] rounded-xl p-6 mt-6">
+        <h2 className="text-lg font-semibold text-gray-200 mb-4">Agent Behavior</h2>
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {settings?.requireApproval !== false ? (
+              <ShieldCheck className="h-5 w-5 text-emerald-400" />
+            ) : (
+              <ShieldOff className="h-5 w-5 text-yellow-400" />
+            )}
+            <div>
+              <p className="text-sm font-medium text-gray-200">Require Approval for Dangerous Operations</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {settings?.requireApproval !== false
+                  ? 'Agent will ask before running shell commands, writing files, or editing code'
+                  : 'Agent will execute all operations immediately without asking'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => updateSettings.mutate({ requireApproval: !settings?.requireApproval })}
+            disabled={settingsLoading || updateSettings.isPending}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-[#111] ${
+              settings?.requireApproval !== false ? 'bg-emerald-600' : 'bg-gray-600'
+            } disabled:opacity-50`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                settings?.requireApproval !== false ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+
+        {settings?.requireApproval === false && (
+          <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
+            <p className="text-xs text-yellow-400">
+              ⚠️ <strong>Warning:</strong> With approval disabled, the agent can modify files, run commands, and make changes without asking first. Use with caution.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
