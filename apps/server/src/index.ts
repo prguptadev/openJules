@@ -617,5 +617,5 @@ app.delete('/api/sessions/:id', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`OpenJules Async Server running on http://localhost:${PORT}`);
+  console.log(`KODE Server running on http://localhost:${PORT}`);
 });

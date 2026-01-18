@@ -156,7 +156,7 @@ export default function Integrations() {
         <GitBranch className="h-6 w-6 text-indigo-500" />
         Integrations & Skills
       </h1>
-      <p className="text-gray-400 mb-8">Manage the tools and external services OpenJules can access.</p>
+      <p className="text-gray-400 mb-8">Manage the tools and external services KODE can access.</p>
 
       <div className="space-y-8">
         {/* Built-in Skills */}

@@ -90,7 +90,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       icon: <Bot className="h-4 w-4" />,
       bg: 'bg-[#1a1a1a] border-[#333]',
       iconBg: 'bg-emerald-500',
-      label: 'Jules',
+      label: 'KODE',
     },
     tool_call: {
       icon: <Wrench className="h-4 w-4" />,
@@ -244,7 +244,7 @@ export function ChatView({ jobId, messages, pendingApproval, isRunning, classNam
             {isRunning && (
               <div className="flex items-center gap-2 text-indigo-400 ml-11">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm">Jules is working...</span>
+                <span className="text-sm">KODE is working...</span>
               </div>
             )}
           </>

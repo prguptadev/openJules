@@ -361,7 +361,7 @@ function WelcomeScreen({ onNewChat }: { onNewChat: (command: string) => void }) 
           <p className="text-gray-400">
             {session?.selectedRepo
               ? `Working on ${session.selectedRepo.fullName}`
-              : 'Start a conversation with OpenJules'}
+              : 'Start a conversation with KODE'}
           </p>
         </div>
 
@@ -518,7 +518,7 @@ export function ChatBot() {
             </div>
             <div className="flex items-center gap-2 text-gray-400">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-sm">Jules is thinking...</span>
+              <span className="text-sm">KODE is thinking...</span>
             </div>
           </div>
         )}

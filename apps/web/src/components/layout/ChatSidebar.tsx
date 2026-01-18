@@ -122,7 +122,7 @@ export function ChatSidebar() {
           <div className="h-8 w-8 bg-indigo-600 rounded-lg flex items-center justify-center">
             <Terminal className="text-white h-4 w-4" />
           </div>
-          <span className="font-bold text-base text-white">OpenJules</span>
+          <span className="font-bold text-base text-white">KODE</span>
         </div>
         <button
           onClick={() => navigate('/chat/new')}

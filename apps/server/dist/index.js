@@ -553,5 +553,5 @@ app.delete('/api/sessions/:id', (req, res) => {
     res.json({ success: true, message: 'Session deleted' });
 });
 app.listen(PORT, () => {
-    console.log(`OpenJules Async Server running on http://localhost:${PORT}`);
+    console.log(`KODE Server running on http://localhost:${PORT}`);
 });
